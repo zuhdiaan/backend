@@ -1,5 +1,6 @@
 const express = require('express');
 const mysql = require('mysql');
+const midtransClient = require('midtrans-client');
 const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -21,6 +22,35 @@ connection.connect((err) => {
     return;
   }
   console.log('Connected to MySQL as id ' + connection.threadId);
+});
+
+let snap = new midtransClient.Snap({
+  isProduction: false,
+  serverKey: 'SB-Mid-server-tD8SJfEzpjbmMW2_t06AK37u',
+});
+
+app.post('/api/transaction', async (req, res) => {
+  const { orderId, grossAmount, customerDetails } = req.body;
+
+  try {
+    let parameter = {
+      "transaction_details": {
+        "order_id": orderId,
+        "gross_amount": grossAmount,
+      },
+      "credit_card": {
+        "secure": true
+      },
+      "customer_details": customerDetails
+    };
+
+    const transaction = await snap.createTransaction(parameter);
+    const transactionToken = transaction.token;
+
+    res.json({ transactionToken });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get('/api/menu_items', (req, res) => {
