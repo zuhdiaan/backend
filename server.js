@@ -47,10 +47,30 @@ app.post('/api/transaction', async (req, res) => {
     const transaction = await snap.createTransaction(parameter);
     const transactionToken = transaction.token;
 
-    res.json({ transactionToken });
+    const sql = 'INSERT INTO transactions (order_id, transaction_token) VALUES (?, ?)';
+    connection.query(sql, [orderId, transactionToken], (err, result) => {
+      if (err) {
+        console.error('Error inserting into database:', err);
+        res.status(500).json({ error: 'Failed to store transaction token' });
+      } else {
+        res.json({ transactionToken });
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+app.get('/api/transaction', (req, res) => {
+  const sql = 'SELECT * FROM transactions';
+  connection.query(sql, (err, results) => {
+    if (err) {
+      console.error('Error fetching transactions from database:', err);
+      res.status(500).json({ error: 'Failed to fetch transactions' });
+    } else {
+      res.json(results);
+    }
+  });
 });
 
 app.get('/api/menu_items', (req, res) => {
@@ -71,32 +91,6 @@ app.post('/api/menu_items', (req, res) => {
     if (err) {
       console.error('Error inserting into database:', err);
       res.status(500).json({ error: 'Failed to add menu item' });
-    } else {
-      res.json({ id: result.insertId });
-    }
-  });
-});
-
-
-// Endpoint untuk mendapatkan semua pesanan
-app.get('/api/orders', (req, res) => {
-  let sql = 'SELECT * FROM orders';
-  connection.query(sql, (err, results) => {
-    if (err) {
-      res.status(500).json({ error: 'Failed to fetch orders' });
-    } else {
-      res.json(results);
-    }
-  });
-});
-
-// Endpoint untuk membuat pesanan baru
-app.post('/api/orders', (req, res) => {
-  const { menu_id, table_number, payment_method } = req.body;
-  const sql = 'INSERT INTO orders (menu_id, table_number, payment_status, payment_method, timestamp) VALUES (?, ?, "unpaid", ?, NOW())';
-  connection.query(sql, [menu_id, table_number, payment_method], (err, result) => {
-    if (err) {
-      res.status(500).json({ error: 'Failed to create order' });
     } else {
       res.json({ id: result.insertId });
     }
