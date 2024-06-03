@@ -26,7 +26,7 @@ connection.connect((err) => {
 
 let snap = new midtransClient.Snap({
   isProduction: false,
-  serverKey: 'SB-Mid-server-tD8SJfEzpjbmMW2_t06AK37u',
+  serverKey: process.env.SECRET,
 });
 
 app.post('/api/transaction', async (req, res) => {
