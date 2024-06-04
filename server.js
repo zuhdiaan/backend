@@ -36,7 +36,7 @@ let snap = new midtransClient.Snap({
   serverKey: process.env.SECRET,
 });
 
-console.log('Midtrans Server Key:', process.env.SECRET);
+// console.log('Midtrans Server Key:', process.env.SECRET);
 
 app.post('/api/order', async (req, res) => {
   const { orderId, grossAmount, customerDetails, orderedItems } = req.body;
@@ -74,18 +74,29 @@ app.post('/api/order', async (req, res) => {
     });
 
     await Promise.all(insertOrderPromises);
-    res.json({ transactionToken });
+
+    const [order] = await new Promise((resolve, reject) => {
+      connection.query('SELECT order_date FROM orders WHERE order_id = ?', [orderId], (err, results) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(results);
+        }
+      });
+    });
+
+    res.json({ transactionToken, orderDate: order.order_date });
   } catch (error) {
-    console.error('Error placing order:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/order', (req, res) => {
   const sql = `
-    SELECT order_id, transaction_token, order_date, 
-           GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items, 
-           total_price
+    SELECT order_id, transaction_token,
+      CONVERT_TZ(order_date, '+00:00', '+07:00') AS order_date,  -- Adjust '+07:00' to your local timezone offset
+      GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items, 
+      total_price
     FROM orders
     GROUP BY order_id, transaction_token, order_date, total_price
   `;
