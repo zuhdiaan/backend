@@ -9,6 +9,7 @@ const multer  = require('multer')
 const upload = multer({ dest: 'public/uploads/' })
 const path = require('path');
 const fs = require('fs').promises;
+require('dotenv').config();
 
 app.use(bodyParser.json());
 app.use(cors());
@@ -35,7 +36,9 @@ let snap = new midtransClient.Snap({
   serverKey: process.env.SECRET,
 });
 
-app.post('/api/transaction', async (req, res) => {
+console.log('Midtrans Server Key:', process.env.SECRET);
+
+app.post('/api/order', async (req, res) => {
   const { orderId, grossAmount, customerDetails, orderedItems } = req.body;
 
   try {
@@ -53,59 +56,43 @@ app.post('/api/transaction', async (req, res) => {
     const transaction = await snap.createTransaction(parameter);
     const transactionToken = transaction.token;
 
-    const sqlTransaction = 'INSERT INTO transactions (order_id, transaction_token) VALUES (?, ?)';
-    connection.query(sqlTransaction, [orderId, transactionToken], (err, result) => {
-      if (err) {
-        console.error('Error inserting into transactions table:', err);
-        res.status(500).json({ error: 'Failed to store transaction token' });
-      } else {
-        const transactionId = result.insertId;
-        const sqlOrderDetails = 'INSERT INTO order_details (order_id, item_id, quantity) VALUES ?';
-        const orderDetailsValues = orderedItems.map(item => [orderId, item.id, item.quantity]);
-
-        connection.query(sqlOrderDetails, [orderDetailsValues], (err, result) => {
+    const insertOrderPromises = orderedItems.map(item => {
+      const sqlOrder = `
+        INSERT INTO orders (order_id, transaction_token, order_date, item_id, item_name, quantity, item_price, total_price)
+        VALUES (?, ?, DEFAULT, ?, ?, ?, ?, ?)
+      `;
+      return new Promise((resolve, reject) => {
+        connection.query(sqlOrder, [orderId, transactionToken, item.id, item.name, item.quantity, item.price, grossAmount], (err, result) => {
           if (err) {
-            console.error('Error inserting into order_details table:', err);
-            res.status(500).json({ error: 'Failed to store order details' });
+            console.error('Error inserting into orders table:', err);
+            reject(err);
           } else {
-            res.json({ transactionToken });
+            resolve(result);
           }
         });
-      }
+      });
     });
+
+    await Promise.all(insertOrderPromises);
+    res.json({ transactionToken });
   } catch (error) {
+    console.error('Error placing order:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/transaction', (req, res) => {
+app.get('/api/order', (req, res) => {
   const sql = `
-    SELECT t.id, t.order_id, t.transaction_token, 
-           GROUP_CONCAT(CONCAT(od.item_id, ':', od.quantity)) AS items
-    FROM transactions t
-    LEFT JOIN order_details od ON t.order_id = od.order_id
-    GROUP BY t.id, t.order_id, t.transaction_token
+    SELECT order_id, transaction_token, order_date, 
+           GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items, 
+           total_price
+    FROM orders
+    GROUP BY order_id, transaction_token, order_date, total_price
   `;
   connection.query(sql, (err, results) => {
     if (err) {
-      console.error('Error fetching transactions from database:', err);
-      res.status(500).json({ error: 'Failed to fetch transactions' });
-    } else {
-      res.json(results);
-    }
-  });
-});
-
-app.get('/api/order_details', (req, res) => {
-  const sql = `
-    SELECT od.order_id, mi.name, od.quantity 
-    FROM order_details od
-    JOIN menu_items mi ON od.item_id = mi.id
-  `;
-  connection.query(sql, (err, results) => {
-    if (err) {
-      console.error('Error fetching order details from database:', err);
-      res.status(500).json({ error: 'Failed to fetch order details' });
+      console.error('Error fetching orders from database:', err);
+      res.status(500).json({ error: 'Failed to fetch orders' });
     } else {
       res.json(results);
     }
