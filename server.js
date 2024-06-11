@@ -172,7 +172,8 @@ app.post('/api/login', (req, res) => {
       res.status(500).json({ error: 'Failed to login' });
     } else {
       if (results.length > 0) {
-        res.json({ success: true, message: 'Login successful' });
+        const user = results[0];
+        res.json({ success: true, message: 'Login successful', userId: user.id, name: user.name, balance: user.balance });
       } else {
         res.status(401).json({ success: false, message: 'Invalid username or password' });
       }
@@ -206,6 +207,45 @@ app.post('/api/forgotpassword', (req, res) => {
         res.json({ success: true, message: 'Password reset instructions sent to your email' });
       } else {
         res.status(404).json({ success: false, message: 'Email not found' });
+      }
+    }
+  });
+});
+
+app.get('/api/user/:id', (req, res) => {
+  const userId = req.params.id;
+  const sql = 'SELECT name, balance FROM users WHERE id = ?';
+  connection.query(sql, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching user:', err);
+      res.status(500).json({ error: 'Failed to fetch user' });
+    } else {
+      if (results.length > 0) {
+        res.json({ name: results[0].name, balance: results[0].balance });
+      } else {
+        res.status(404).json({ error: 'User not found' });
+      }
+    }
+  });
+});
+
+app.get('/api/balance', (req, res) => {
+  const userId = req.query.userId;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  const sql = 'SELECT balance FROM users WHERE id = ?';
+  connection.query(sql, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching balance:', err);
+      res.status(500).json({ error: 'Failed to fetch balance' });
+    } else {
+      if (results.length > 0) {
+        res.json({ balance: results[0].balance });
+      } else {
+        res.status(404).json({ error: 'User not found' });
       }
     }
   });
