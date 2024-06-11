@@ -163,6 +163,54 @@ app.get('/api/files/:filename', (req, res) => {
   res.json({ url: fileUrl });
 });
 
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  const sql = 'SELECT * FROM users WHERE username = ? AND password = ?';
+  connection.query(sql, [username, password], (err, results) => {
+    if (err) {
+      console.error('Error logging in:', err);
+      res.status(500).json({ error: 'Failed to login' });
+    } else {
+      if (results.length > 0) {
+        res.json({ success: true, message: 'Login successful' });
+      } else {
+        res.status(401).json({ success: false, message: 'Invalid username or password' });
+      }
+    }
+  });
+});
+
+app.post('/api/register', (req, res) => {
+  const { name, email, username, password } = req.body;
+  const sql = 'INSERT INTO users (name, email, username, password) VALUES (?, ?, ?, ?)';
+  connection.query(sql, [name, email, username, password], (err, result) => {
+    if (err) {
+      console.error('Error registering:', err);
+      res.status(500).json({ error: 'Failed to register' });
+    } else {
+      res.json({ success: true, message: 'Registration successful' });
+    }
+  });
+});
+
+app.post('/api/forgotpassword', (req, res) => {
+  const { email } = req.body;
+  const sql = 'SELECT * FROM users WHERE email = ?';
+  connection.query(sql, [email], (err, results) => {
+    if (err) {
+      console.error('Error retrieving user data:', err);
+      res.status(500).json({ error: 'Failed to retrieve user data' });
+    } else {
+      if (results.length > 0) {
+        // Implement logic to send password reset link or code to the user's email
+        res.json({ success: true, message: 'Password reset instructions sent to your email' });
+      } else {
+        res.status(404).json({ success: false, message: 'Email not found' });
+      }
+    }
+  });
+});
+
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });
