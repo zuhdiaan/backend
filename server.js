@@ -1,6 +1,5 @@
 const express = require('express');
 const mysql = require('mysql');
-const midtransClient = require('midtrans-client');
 const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -9,6 +8,7 @@ const multer  = require('multer')
 const upload = multer({ dest: 'public/uploads/' })
 const path = require('path');
 const fs = require('fs').promises;
+const moment = require('moment');
 require('dotenv').config();
 
 app.use(bodyParser.json());
@@ -31,74 +31,94 @@ connection.connect((err) => {
   console.log('Connected to MySQL as id ' + connection.threadId);
 });
 
-let snap = new midtransClient.Snap({
-  isProduction: false,
-  serverKey: process.env.SECRET,
-});
-
-// console.log('Midtrans Server Key:', process.env.SECRET);
-
-app.post('/api/order', async (req, res) => {
-  const { orderId, grossAmount, customerDetails, orderedItems } = req.body;
+app.post('/api/updateBalance', async (req, res) => {
+  const { userId, newBalance } = req.body;
 
   try {
-    let parameter = {
-      "transaction_details": {
-        "order_id": orderId,
-        "gross_amount": grossAmount,
-      },
-      "credit_card": {
-        "secure": true
-      },
-      "customer_details": customerDetails
-    };
-
-    const transaction = await snap.createTransaction(parameter);
-    const transactionToken = transaction.token;
-
-    const insertOrderPromises = orderedItems.map(item => {
-      const sqlOrder = `
-        INSERT INTO orders (order_id, transaction_token, order_date, item_id, item_name, quantity, item_price, total_price)
-        VALUES (?, ?, DEFAULT, ?, ?, ?, ?, ?)
-      `;
-      return new Promise((resolve, reject) => {
-        connection.query(sqlOrder, [orderId, transactionToken, item.id, item.name, item.quantity, item.price, grossAmount], (err, result) => {
-          if (err) {
-            console.error('Error inserting into orders table:', err);
-            reject(err);
-          } else {
-            resolve(result);
-          }
-        });
+    const sql = 'UPDATE users SET balance = ? WHERE id = ?';
+    await new Promise((resolve, reject) => {
+      connection.query(sql, [newBalance, userId], (err, result) => {
+        if (err) {
+          console.error('Error updating balance:', err);
+          reject(err);
+        } else {
+          res.json({ message: 'Balance updated successfully' });
+          resolve();
+        }
       });
     });
+  } catch (error) {
+    console.error('Error updating balance:', error);
+    res.status(500).json({ error: 'Failed to update balance' });
+  }
+});
 
-    await Promise.all(insertOrderPromises);
+app.post('/api/order', async (req, res) => {
+  const { orderId, orderDate, orderedItems } = req.body;
 
-    const [order] = await new Promise((resolve, reject) => {
-      connection.query('SELECT order_date FROM orders WHERE order_id = ?', [orderId], (err, results) => {
+  try {
+    // Format orderDate to the correct format
+    const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
+
+    // Begin transaction
+    await new Promise((resolve, reject) => {
+      connection.beginTransaction((err) => {
         if (err) {
           reject(err);
         } else {
-          resolve(results);
+          resolve();
         }
       });
     });
 
-    res.json({ transactionToken, orderDate: order.order_date });
+    // Insert order items into the database
+    const values = orderedItems.map(item => [
+      orderId,
+      formattedOrderDate,
+      item.item_id,
+      item.item_name,
+      item.quantity,
+      item.item_price,
+      item.total_price
+    ]);
+
+    const sql = 'INSERT INTO orders (order_id, order_date, item_id, item_name, quantity, item_price, total_price) VALUES ?';
+
+    connection.query(sql, [values], (err, result) => {
+      if (err) {
+        console.error('Error inserting order:', err);
+        throw err;
+      } else {
+        // Commit transaction
+        connection.commit((err) => {
+          if (err) {
+            console.error('Error committing transaction:', err);
+            throw err;
+          } else {
+            console.log('Order placed successfully');
+            res.json({ message: 'Order placed successfully' });
+          }
+        });
+      }
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    // Rollback transaction in case of error
+    connection.rollback(() => {
+      console.error('Error placing order:', error);
+      res.status(500).json({ error: 'Failed to place order' });
+    });
   }
 });
 
+
 app.get('/api/order', (req, res) => {
   const sql = `
-    SELECT order_id, transaction_token,
+    SELECT order_id,
       CONVERT_TZ(order_date, '+00:00', '+07:00') AS order_date,  -- Adjust '+07:00' to your local timezone offset
       GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items, 
       total_price
     FROM orders
-    GROUP BY order_id, transaction_token, order_date, total_price
+    GROUP BY order_id, order_date, total_price
   `;
   connection.query(sql, (err, results) => {
     if (err) {
@@ -244,6 +264,32 @@ app.get('/api/balance', (req, res) => {
     } else {
       if (results.length > 0) {
         res.json({ balance: results[0].balance });
+      } else {
+        res.status(404).json({ error: 'User not found' });
+      }
+    }
+  });
+});
+
+app.post('/api/topup', (req, res) => {
+  const { username, amount } = req.body;
+  const sql = 'UPDATE users SET balance = balance + ? WHERE username = ?';
+  connection.query(sql, [amount, username], async (err, result) => {
+    if (err) {
+      console.error('Error updating balance:', err);
+      res.status(500).json({ error: 'Failed to update balance' });
+    } else {
+      if (result.changedRows > 0) {
+        const updatedBalance = await new Promise((resolve, reject) => {
+          connection.query('SELECT balance FROM users WHERE username = ?', [username], (err, results) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve(results[0].balance);
+            }
+          });
+        });
+        res.json({ balance: updatedBalance });
       } else {
         res.status(404).json({ error: 'User not found' });
       }
