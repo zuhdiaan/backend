@@ -4,8 +4,8 @@ const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const port = 3000;
-const multer  = require('multer')
-const upload = multer({ dest: 'public/uploads/' })
+const multer  = require('multer');
+const upload = multer({ dest: 'public/uploads/' });
 const path = require('path');
 const fs = require('fs').promises;
 const moment = require('moment');
@@ -54,11 +54,11 @@ app.post('/api/updateBalance', async (req, res) => {
 });
 
 app.post('/api/order', async (req, res) => {
-  const { orderId, orderDate, orderedItems } = req.body;
+  const { orderId, orderTime, orderedItems } = req.body;
 
   try {
-    // Format orderDate to the correct format
-    const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
+    // Format orderTime to the correct format
+    const formattedOrderTime = moment(orderTime).format('YYYY-MM-DD HH:mm:ss');
 
     // Begin transaction
     await new Promise((resolve, reject) => {
@@ -74,7 +74,7 @@ app.post('/api/order', async (req, res) => {
     // Insert order items into the database
     const values = orderedItems.map(item => [
       orderId,
-      formattedOrderDate,
+      formattedOrderTime,
       item.item_id,
       item.item_name,
       item.quantity,
@@ -82,7 +82,7 @@ app.post('/api/order', async (req, res) => {
       item.total_price
     ]);
 
-    const sql = 'INSERT INTO orders (order_id, order_date, item_id, item_name, quantity, item_price, total_price) VALUES ?';
+    const sql = 'INSERT INTO orders (order_id, order_time, item_id, item_name, quantity, item_price, total_price) VALUES ?';
 
     connection.query(sql, [values], (err, result) => {
       if (err) {
@@ -110,15 +110,14 @@ app.post('/api/order', async (req, res) => {
   }
 });
 
-
 app.get('/api/order', (req, res) => {
   const sql = `
     SELECT order_id,
-      CONVERT_TZ(order_date, '+00:00', '+07:00') AS order_date,  -- Adjust '+07:00' to your local timezone offset
+      CONVERT_TZ(order_time, '+00:00', '+07:00') AS order_time,  -- Adjust '+07:00' to your local timezone offset
       GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items, 
       total_price
     FROM orders
-    GROUP BY order_id, order_date, total_price
+    GROUP BY order_id, order_time, total_price
   `;
   connection.query(sql, (err, results) => {
     if (err) {
@@ -251,11 +250,6 @@ app.get('/api/user/:id', (req, res) => {
 
 app.get('/api/balance', (req, res) => {
   const userId = req.query.userId;
-
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
-  }
-
   const sql = 'SELECT balance FROM users WHERE id = ?';
   connection.query(sql, [userId], (err, results) => {
     if (err) {
@@ -271,32 +265,6 @@ app.get('/api/balance', (req, res) => {
   });
 });
 
-app.post('/api/topup', (req, res) => {
-  const { username, amount } = req.body;
-  const sql = 'UPDATE users SET balance = balance + ? WHERE username = ?';
-  connection.query(sql, [amount, username], async (err, result) => {
-    if (err) {
-      console.error('Error updating balance:', err);
-      res.status(500).json({ error: 'Failed to update balance' });
-    } else {
-      if (result.changedRows > 0) {
-        const updatedBalance = await new Promise((resolve, reject) => {
-          connection.query('SELECT balance FROM users WHERE username = ?', [username], (err, results) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve(results[0].balance);
-            }
-          });
-        });
-        res.json({ balance: updatedBalance });
-      } else {
-        res.status(404).json({ error: 'User not found' });
-      }
-    }
-  });
-});
-
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+  console.log(`Server running on port ${port}`);
 });
