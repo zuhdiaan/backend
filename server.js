@@ -54,9 +54,24 @@ app.post('/api/updateBalance', async (req, res) => {
 });
 
 app.post('/api/order', async (req, res) => {
-  const { orderId, orderTime, orderedItems } = req.body;
+  const { orderTime, orderedItems } = req.body;
 
   try {
+    // Generate orderId
+    const currentDate = moment().format('DDMMYY');
+    const countSql = 'SELECT COUNT(*) AS count FROM orders WHERE DATE(order_time) = CURDATE()';
+    const countResult = await new Promise((resolve, reject) => {
+      connection.query(countSql, (err, result) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(result);
+        }
+      });
+    });
+    const orderIdSuffix = countResult[0].count + 1;
+    const orderId = `OR${currentDate}-${orderIdSuffix}`;
+
     // Format orderTime to the correct format
     const formattedOrderTime = moment(orderTime).format('YYYY-MM-DD HH:mm:ss');
 
@@ -96,7 +111,7 @@ app.post('/api/order', async (req, res) => {
             throw err;
           } else {
             console.log('Order placed successfully');
-            res.json({ message: 'Order placed successfully' });
+            res.json({ message: 'Order placed successfully', orderId: orderId });
           }
         });
       }
@@ -262,6 +277,39 @@ app.get('/api/balance', (req, res) => {
         res.status(404).json({ error: 'User not found' });
       }
     }
+  });
+});
+
+app.post('/api/topup', (req, res) => {
+  const { username, amount } = req.body;
+
+  // Contoh implementasi: Ambil saldo user dari database, tambahkan amount, dan update saldo user di database
+  const sql = 'SELECT * FROM users WHERE username = ?';
+  connection.query(sql, [username], (err, results) => {
+    if (err) {
+      console.error('Error fetching user data:', err);
+      res.status(500).json({ error: 'Failed to fetch user data' });
+      return;
+    }
+
+    if (results.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const user = results[0];
+    const newBalance = user.balance + parseInt(amount);
+
+    const updateSql = 'UPDATE users SET balance = ? WHERE username = ?';
+    connection.query(updateSql, [newBalance, username], (updateErr, updateResult) => {
+      if (updateErr) {
+        console.error('Error updating balance:', updateErr);
+        res.status(500).json({ error: 'Failed to update balance' });
+        return;
+      }
+
+      res.json({ success: true, message: 'Balance updated successfully', balance: newBalance });
+    });
   });
 });
 
