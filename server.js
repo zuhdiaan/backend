@@ -54,7 +54,7 @@ app.post('/api/updateBalance', async (req, res) => {
 });
 
 app.post('/api/order', async (req, res) => {
-  const { orderTime, orderedItems } = req.body;
+  const { orderTime, orderedItems, userId, name } = req.body;
 
   try {
     // Generate orderId
@@ -94,10 +94,12 @@ app.post('/api/order', async (req, res) => {
       item.item_name,
       item.quantity,
       item.item_price,
-      item.total_price
+      item.total_price,
+      userId,
+      name // Include the user's name
     ]);
 
-    const sql = 'INSERT INTO orders (order_id, order_time, item_id, item_name, quantity, item_price, total_price) VALUES ?';
+    const sql = 'INSERT INTO orders (order_id, order_time, item_id, item_name, quantity, item_price, total_price, user_id, user_name) VALUES ?';
 
     connection.query(sql, [values], (err, result) => {
       if (err) {
@@ -127,20 +129,24 @@ app.post('/api/order', async (req, res) => {
 
 app.get('/api/order', (req, res) => {
   const sql = `
-    SELECT order_id,
-      CONVERT_TZ(order_time, '+00:00', '+07:00') AS order_time,  -- Adjust '+07:00' to your local timezone offset
-      GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items, 
-      total_price
-    FROM orders
-    GROUP BY order_id, order_time, total_price
+      SELECT
+          order_id,
+          CONVERT_TZ(order_time, '+00:00', '+07:00') AS order_time,
+          GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items,
+          total_price,
+          user_name
+      FROM
+          orders
+      GROUP BY
+          order_id, order_time, total_price, user_name
   `;
   connection.query(sql, (err, results) => {
-    if (err) {
-      console.error('Error fetching orders from database:', err);
-      res.status(500).json({ error: 'Failed to fetch orders' });
-    } else {
-      res.json(results);
-    }
+      if (err) {
+          console.error('Error fetching orders from database:', err);
+          res.status(500).json({ error: 'Failed to fetch orders' });
+      } else {
+          res.json(results);
+      }
   });
 });
 
