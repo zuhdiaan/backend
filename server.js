@@ -17,10 +17,10 @@ app.use(cors());
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
 const connection = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: 'r00t',
-  database: 'jiwani_order',
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
 });
 
 connection.connect((err) => {
@@ -128,7 +128,8 @@ app.post('/api/order', async (req, res) => {
 });
 
 app.get('/api/order', (req, res) => {
-  const sql = `
+  const status = req.query.status;
+  let sql = `
       SELECT
           order_id,
           CONVERT_TZ(order_time, '+00:00', '+07:00') AS order_time,
@@ -137,9 +138,13 @@ app.get('/api/order', (req, res) => {
           user_name
       FROM
           orders
-      GROUP BY
-          order_id, order_time, total_price, user_name
-  `;
+      `;
+  if (status === 'pending') {
+    sql += "WHERE status = 'pending'";
+  } else if (status === 'completed') {
+    sql += "WHERE status = 'completed'";
+  }
+  sql += "GROUP BY order_id, order_time, total_price, user_name";
   connection.query(sql, (err, results) => {
       if (err) {
           console.error('Error fetching orders from database:', err);
@@ -317,6 +322,35 @@ app.post('/api/topup', (req, res) => {
       res.json({ success: true, message: 'Balance updated successfully', balance: newBalance });
     });
   });
+});
+
+app.post('/api/updateOrderStatus', async (req, res) => {
+  const { orderId, status } = req.body;
+  console.log(`Received request to update order status. orderId: ${orderId}, status: ${status}`);
+
+  try {
+    const sql = 'UPDATE orders SET status = ? WHERE order_id = ?';
+    const result = await new Promise((resolve, reject) => {
+      connection.query(sql, [status, orderId], (err, result) => {
+        if (err) {
+          console.error('Error updating order status:', err);
+          reject(err);
+        } else {
+          console.log(`Order status updated successfully. Affected rows: ${result.affectedRows}`);
+          resolve(result);
+        }
+      });
+    });
+
+    if (result.affectedRows > 0) {
+      res.json({ message: 'Order status updated successfully' });
+    } else {
+      res.status(404).json({ error: 'Order not found' });
+    }
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({ error: 'Failed to update order status' });
+  }
 });
 
 app.listen(port, () => {
