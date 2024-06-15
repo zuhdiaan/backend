@@ -58,10 +58,10 @@ app.post('/api/order', async (req, res) => {
 
   try {
     // Generate orderId
-    const currentDate = moment().format('DDMMYY');
-    const countSql = 'SELECT COUNT(*) AS count FROM orders WHERE DATE(order_time) = CURDATE()';
-    const countResult = await new Promise((resolve, reject) => {
-      connection.query(countSql, (err, result) => {
+    const currentDate = moment(orderTime).format('DDMMYY');
+    const maxOrderIdSql = 'SELECT MAX(order_id) AS maxOrderId FROM orders WHERE DATE(order_time) = CURDATE()';
+    const maxOrderIdResult = await new Promise((resolve, reject) => {
+      connection.query(maxOrderIdSql, (err, result) => {
         if (err) {
           reject(err);
         } else {
@@ -69,61 +69,70 @@ app.post('/api/order', async (req, res) => {
         }
       });
     });
-    const orderIdSuffix = countResult[0].count + 1;
+
+    let orderIdSuffix = 1;
+    if (maxOrderIdResult[0].maxOrderId) {
+      const maxOrderIdParts = maxOrderIdResult[0].maxOrderId.split('-');
+      orderIdSuffix = parseInt(maxOrderIdParts[1]) + 1;
+    }
+
     const orderId = `OR${currentDate}-${orderIdSuffix}`;
 
     // Format orderTime to the correct format
     const formattedOrderTime = moment(orderTime).format('YYYY-MM-DD HH:mm:ss');
 
     // Begin transaction
-    await new Promise((resolve, reject) => {
-      connection.beginTransaction((err) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
-
-    // Insert order items into the database
-    const values = orderedItems.map(item => [
-      orderId,
-      formattedOrderTime,
-      item.item_id,
-      item.item_name,
-      item.quantity,
-      item.item_price,
-      item.total_price,
-      userId,
-      name // Include the user's name
-    ]);
-
-    const sql = 'INSERT INTO orders (order_id, order_time, item_id, item_name, quantity, item_price, total_price, user_id, user_name) VALUES ?';
-
-    connection.query(sql, [values], (err, result) => {
+    connection.beginTransaction(async (err) => {
       if (err) {
-        console.error('Error inserting order:', err);
         throw err;
-      } else {
+      }
+
+      try {
+        // Insert order items into the database
+        const values = orderedItems.map(item => [
+          orderId,
+          formattedOrderTime,
+          item.item_id,
+          item.item_name,
+          item.quantity,
+          item.item_price,
+          item.total_price,
+          userId,
+          name // Include the user's name
+        ]);
+
+        const sql = 'INSERT INTO orders (order_id, order_time, item_id, item_name, quantity, item_price, total_price, user_id, user_name) VALUES ?';
+
+        await new Promise((resolve, reject) => {
+          connection.query(sql, [values], (err, result) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve(result);
+            }
+          });
+        });
+
         // Commit transaction
         connection.commit((err) => {
           if (err) {
-            console.error('Error committing transaction:', err);
             throw err;
           } else {
             console.log('Order placed successfully');
             res.json({ message: 'Order placed successfully', orderId: orderId });
           }
         });
+      } catch (error) {
+        // Rollback transaction in case of error
+        connection.rollback(() => {
+          console.error('Error inserting order:', error);
+          res.status(500).json({ error: 'Failed to place order' });
+        });
       }
     });
   } catch (error) {
-    // Rollback transaction in case of error
-    connection.rollback(() => {
-      console.error('Error placing order:', error);
-      res.status(500).json({ error: 'Failed to place order' });
-    });
+    console.error('Error generating orderId:', error);
+    res.status(500).json({ error: 'Failed to generate orderId' });
   }
 });
 
