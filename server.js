@@ -248,23 +248,23 @@ app.post('/api/register', (req, res) => {
   });
 });
 
-app.post('/api/forgotpassword', (req, res) => {
-  const { email } = req.body;
-  const sql = 'SELECT * FROM users WHERE email = ?';
-  connection.query(sql, [email], (err, results) => {
-    if (err) {
-      console.error('Error retrieving user data:', err);
-      res.status(500).json({ error: 'Failed to retrieve user data' });
-    } else {
-      if (results.length > 0) {
-        // Implement logic to send password reset link or code to the user's email
-        res.json({ success: true, message: 'Password reset instructions sent to your email' });
-      } else {
-        res.status(404).json({ success: false, message: 'Email not found' });
-      }
-    }
-  });
-});
+// app.post('/api/forgotpassword', (req, res) => {
+//   const { email } = req.body;
+//   const sql = 'SELECT * FROM users WHERE email = ?';
+//   connection.query(sql, [email], (err, results) => {
+//     if (err) {
+//       console.error('Error retrieving user data:', err);
+//       res.status(500).json({ error: 'Failed to retrieve user data' });
+//     } else {
+//       if (results.length > 0) {
+//         // Implement logic to send password reset link or code to the user's email
+//         res.json({ success: true, message: 'Password reset instructions sent to your email' });
+//       } else {
+//         res.status(404).json({ success: false, message: 'Email not found' });
+//       }
+//     }
+//   });
+// });
 
 app.get('/api/user/:id', (req, res) => {
   const userId = req.params.id;
