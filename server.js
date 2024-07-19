@@ -32,12 +32,12 @@ connection.connect((err) => {
 });
 
 app.post('/api/updateBalance', async (req, res) => {
-  const { userId, newBalance } = req.body;
+  const { memberId, newBalance } = req.body;
 
   try {
-    const sql = 'UPDATE users SET balance = ? WHERE id = ?';
+    const sql = 'UPDATE members SET balance = ? WHERE member_id = ?';
     await new Promise((resolve, reject) => {
-      connection.query(sql, [newBalance, userId], (err, result) => {
+      connection.query(sql, [newBalance, memberId], (err, result) => {
         if (err) {
           console.error('Error updating balance:', err);
           reject(err);
@@ -54,32 +54,11 @@ app.post('/api/updateBalance', async (req, res) => {
 });
 
 app.post('/api/order', async (req, res) => {
-  const { orderTime, orderedItems, userId, name } = req.body;
+  const { orderId, orderDate, orderedItems, memberId, tableId, paymentId, orderStatusId, paymentStatusId } = req.body;
 
   try {
-    // Generate orderId
-    const currentDate = moment(orderTime).format('DDMMYY');
-    const maxOrderIdSql = 'SELECT MAX(order_id) AS maxOrderId FROM orders WHERE DATE(order_time) = CURDATE()';
-    const maxOrderIdResult = await new Promise((resolve, reject) => {
-      connection.query(maxOrderIdSql, (err, result) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      });
-    });
-
-    let orderIdSuffix = 1;
-    if (maxOrderIdResult[0].maxOrderId) {
-      const maxOrderIdParts = maxOrderIdResult[0].maxOrderId.split('-');
-      orderIdSuffix = parseInt(maxOrderIdParts[1]) + 1;
-    }
-
-    const orderId = `OR${currentDate}-${orderIdSuffix}`;
-
-    // Format orderTime to the correct format
-    const formattedOrderTime = moment(orderTime).format('YYYY-MM-DD HH:mm:ss');
+    // Format orderDate to the correct format
+    const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
 
     // Begin transaction
     connection.beginTransaction(async (err) => {
@@ -88,23 +67,30 @@ app.post('/api/order', async (req, res) => {
       }
 
       try {
-        // Insert order items into the database
-        const values = orderedItems.map(item => [
+        // Insert order into the database
+        const orderSql = 'INSERT INTO order (order_id, order_date, table_id, payment_id, member_id, order_status_id, payment_status_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
+        await new Promise((resolve, reject) => {
+          connection.query(orderSql, [orderId, formattedOrderDate, tableId, paymentId, memberId, orderStatusId, paymentStatusId], (err, result) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve(result);
+            }
+          });
+        });
+
+        // Insert order details into the database
+        const orderDetailsValues = orderedItems.map(item => [
           orderId,
-          formattedOrderTime,
           item.item_id,
-          item.item_name,
-          item.quantity,
-          item.item_price,
-          item.total_price,
-          userId,
-          name // Include the user's name
+          item.item_amount,
+          item.total_price
         ]);
 
-        const sql = 'INSERT INTO orders (order_id, order_time, item_id, item_name, quantity, item_price, total_price, user_id, user_name) VALUES ?';
+        const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
 
         await new Promise((resolve, reject) => {
-          connection.query(sql, [values], (err, result) => {
+          connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
             if (err) {
               reject(err);
             } else {
@@ -136,24 +122,65 @@ app.post('/api/order', async (req, res) => {
   }
 });
 
+app.post('/api/addOrderDetails', async (req, res) => {
+  const { orderId, orderedItems } = req.body;
+
+  if (!orderId || !Array.isArray(orderedItems) || orderedItems.length === 0) {
+    return res.status(400).json({ error: 'orderId and orderedItems are required' });
+  }
+
+  try {
+    // Menyimpan data order details
+    const orderDetailsValues = orderedItems.map(item => [
+      orderId,
+      item.item_id,
+      item.item_amount,
+      item.total_price
+    ]);
+
+    const sql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
+
+    await new Promise((resolve, reject) => {
+      connection.query(sql, [orderDetailsValues], (err, result) => {
+        if (err) {
+          console.error('Error inserting order details:', err);
+          reject(err);
+        } else {
+          res.json({ message: 'Order details added successfully' });
+          resolve();
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error adding order details:', error);
+    res.status(500).json({ error: 'Failed to add order details' });
+  }
+});
+
 app.get('/api/order', (req, res) => {
   const status = req.query.status;
   let sql = `
       SELECT
-          order_id,
-          CONVERT_TZ(order_time, '+00:00', '+07:00') AS order_time,
-          GROUP_CONCAT(CONCAT(item_id, ':', item_name, ':', quantity, ':', item_price)) AS items,
-          total_price,
-          user_name
+          o.order_id,
+          CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
+          GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
+          SUM(od.total_price) AS total_price,
+          m.name AS user_name
       FROM
-          orders
+          \`order\` o
+      JOIN
+          order_details od ON o.order_id = od.order_id
+      JOIN
+          menu_items mi ON od.item_id = mi.item_id
+      JOIN
+          members m ON o.member_id = m.member_id
       `;
   if (status === 'pending') {
-    sql += "WHERE status = 'pending'";
+    sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'pending')";
   } else if (status === 'completed') {
-    sql += "WHERE status = 'completed'";
+    sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'completed')";
   }
-  sql += "GROUP BY order_id, order_time, total_price, user_name";
+  sql += "GROUP BY o.order_id, o.order_date, m.name";
   connection.query(sql, (err, results) => {
       if (err) {
           console.error('Error fetching orders from database:', err);
@@ -165,7 +192,7 @@ app.get('/api/order', (req, res) => {
 });
 
 app.get('/api/menu_items', (req, res) => {
-  let sql = 'SELECT * FROM menu_items';
+  const sql = 'SELECT item_id, item_name, price, image_source, category_id FROM menu_items';
   connection.query(sql, (err, results) => {
     if (err) {
       res.status(500).json({ error: 'Failed to fetch menu items' });
@@ -177,11 +204,11 @@ app.get('/api/menu_items', (req, res) => {
 
 app.post('/api/menu_items', upload.single('avatar'), async (req, res) => {
   try {
-    const { name, price, category } = req.body;
+    const { item_name, price, category_id } = req.body;
     const uploadedFile = req.file;
 
     // Sanitize the filename
-    const sanitizedFilename = name.toLowerCase().replace(/\s+/g, '-');
+    const sanitizedFilename = item_name.toLowerCase().replace(/\s+/g, '-');
     const originalExtension = path.extname(uploadedFile.originalname);
 
     // Create the target directory if it doesn't exist
@@ -195,8 +222,8 @@ app.post('/api/menu_items', upload.single('avatar'), async (req, res) => {
     console.log('File moved successfully');
 
     // Insert menu item into the database
-    const sql = 'INSERT INTO menu_items (name, price, image_source, category) VALUES (?, ?, ?, ?)';
-    connection.query(sql, [name, price, sanitizedFilename + originalExtension, category], (err, result) => {
+    const sql = 'INSERT INTO menu_items (item_name, price, image_source, category_id) VALUES (?, ?, ?, ?)';
+    connection.query(sql, [item_name, price, sanitizedFilename + originalExtension, category_id], (err, result) => {
       if (err) {
         console.error('Error inserting into database:', err);
         res.status(500).json({ error: 'Failed to add menu item' });
@@ -219,7 +246,7 @@ app.get('/api/files/:filename', (req, res) => {
 
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  const sql = 'SELECT * FROM users WHERE username = ? AND password = ?';
+  const sql = 'SELECT * FROM members WHERE username = ? AND password = ?';
   connection.query(sql, [username, password], (err, results) => {
     if (err) {
       console.error('Error logging in:', err);
@@ -227,7 +254,7 @@ app.post('/api/login', (req, res) => {
     } else {
       if (results.length > 0) {
         const user = results[0];
-        res.json({ success: true, message: 'Login successful', userId: user.id, name: user.name, balance: user.balance });
+        res.json({ success: true, message: 'Login successful', userId: user.member_id, name: user.name, balance: user.balance });
       } else {
         res.status(401).json({ success: false, message: 'Invalid username or password' });
       }
@@ -237,7 +264,7 @@ app.post('/api/login', (req, res) => {
 
 app.post('/api/register', (req, res) => {
   const { name, email, username, password } = req.body;
-  const sql = 'INSERT INTO users (name, email, username, password) VALUES (?, ?, ?, ?)';
+  const sql = 'INSERT INTO members (name, email, username, password) VALUES (?, ?, ?, ?)';
   connection.query(sql, [name, email, username, password], (err, result) => {
     if (err) {
       console.error('Error registering:', err);
@@ -268,7 +295,7 @@ app.post('/api/register', (req, res) => {
 
 app.get('/api/user/:id', (req, res) => {
   const userId = req.params.id;
-  const sql = 'SELECT name, balance FROM users WHERE id = ?';
+  const sql = 'SELECT name, balance FROM members WHERE member_id = ?';
   connection.query(sql, [userId], (err, results) => {
     if (err) {
       console.error('Error fetching user:', err);
@@ -285,7 +312,7 @@ app.get('/api/user/:id', (req, res) => {
 
 app.get('/api/balance', (req, res) => {
   const userId = req.query.userId;
-  const sql = 'SELECT balance FROM users WHERE id = ?';
+  const sql = 'SELECT balance FROM members WHERE member_id = ?';
   connection.query(sql, [userId], (err, results) => {
     if (err) {
       console.error('Error fetching balance:', err);
@@ -301,34 +328,46 @@ app.get('/api/balance', (req, res) => {
 });
 
 app.post('/api/topup', (req, res) => {
-  const { username, amount } = req.body;
+  const { member_id, amount } = req.body;
 
-  // Contoh implementasi: Ambil saldo user dari database, tambahkan amount, dan update saldo user di database
-  const sql = 'SELECT * FROM users WHERE username = ?';
-  connection.query(sql, [username], (err, results) => {
+  // Validasi input
+  if (!member_id || !amount) {
+    return res.status(400).json({ error: 'Member ID and amount are required' });
+  }
+
+  // Ambil saldo user dari database
+  const sqlSelect = 'SELECT * FROM members WHERE member_id = ?';
+  connection.query(sqlSelect, [member_id], (err, results) => {
     if (err) {
       console.error('Error fetching user data:', err);
-      res.status(500).json({ error: 'Failed to fetch user data' });
-      return;
+      return res.status(500).json({ error: 'Failed to fetch user data' });
     }
 
     if (results.length === 0) {
-      res.status(404).json({ error: 'User not found' });
-      return;
+      return res.status(404).json({ error: 'User not found' });
     }
 
     const user = results[0];
-    const newBalance = user.balance + parseInt(amount);
+    const newBalance = parseFloat(user.balance) + parseFloat(amount);
 
-    const updateSql = 'UPDATE users SET balance = ? WHERE username = ?';
-    connection.query(updateSql, [newBalance, username], (updateErr, updateResult) => {
+    // Update saldo user di database
+    const sqlUpdate = 'UPDATE members SET balance = ? WHERE member_id = ?';
+    connection.query(sqlUpdate, [newBalance, member_id], (updateErr, updateResult) => {
       if (updateErr) {
         console.error('Error updating balance:', updateErr);
-        res.status(500).json({ error: 'Failed to update balance' });
-        return;
+        return res.status(500).json({ error: 'Failed to update balance' });
       }
 
-      res.json({ success: true, message: 'Balance updated successfully', balance: newBalance });
+      // Simpan data top-up ke tabel top_up
+      const sqlInsertTopUp = 'INSERT INTO top_up (topup_amount, member_id) VALUES (?, ?)';
+      connection.query(sqlInsertTopUp, [amount, member_id], (insertErr, insertResult) => {
+        if (insertErr) {
+          console.error('Error inserting top-up record:', insertErr);
+          return res.status(500).json({ error: 'Failed to record top-up' });
+        }
+
+        return res.json({ success: true, message: 'Balance updated successfully', balance: newBalance });
+      });
     });
   });
 });
@@ -338,7 +377,7 @@ app.post('/api/updateOrderStatus', async (req, res) => {
   console.log(`Received request to update order status. orderId: ${orderId}, status: ${status}`);
 
   try {
-    const sql = 'UPDATE orders SET status = ? WHERE order_id = ?';
+    const sql = 'UPDATE `order` SET order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = ?) WHERE order_id = ?';
     const result = await new Promise((resolve, reject) => {
       connection.query(sql, [status, orderId], (err, result) => {
         if (err) {
@@ -361,6 +400,36 @@ app.post('/api/updateOrderStatus', async (req, res) => {
     res.status(500).json({ error: 'Failed to update order status' });
   }
 });
+
+app.get('/api/categories/:id', (req, res) => {
+  const categoryId = req.params.id;
+  const sql = 'SELECT * FROM categories WHERE category_id = ?';
+  connection.query(sql, [categoryId], (err, results) => {
+    if (err) {
+      res.status(500).json({ error: 'Failed to fetch category' });
+    } else {
+      if (results.length > 0) {
+        res.json(results[0]);
+      } else {
+        res.status(404).json({ error: 'Category not found' });
+      }
+    }
+  });
+});
+
+app.get('/api/categories', (req, res) => {
+  const sql = 'SELECT * FROM categories'; // Pastikan nama tabel dan kolom sesuai dengan skema database
+  connection.query(sql, (err, results) => {
+    if (err) {
+      console.error('Error fetching categories from database:', err);
+      res.status(500).json({ error: 'Failed to fetch categories' });
+    } else {
+      res.json(results);
+    }
+  });
+});
+
+
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
