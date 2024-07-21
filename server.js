@@ -31,6 +31,54 @@ connection.connect((err) => {
   console.log('Connected to MySQL as id ' + connection.threadId);
 });
 
+app.post('/api/register', (req, res) => {
+  const { name, email, username, password } = req.body;
+  const sql = 'INSERT INTO members (name, email, username, password) VALUES (?, ?, ?, ?)';
+  connection.query(sql, [name, email, username, password], (err, result) => {
+    if (err) {
+      console.error('Error registering:', err);
+      res.status(500).json({ error: 'Failed to register' });
+    } else {
+      res.json({ success: true, message: 'Registration successful' });
+    }
+  });
+});
+
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  const sql = 'SELECT * FROM members WHERE username = ? AND password = ?';
+  connection.query(sql, [username, password], (err, results) => {
+    if (err) {
+      console.error('Error logging in:', err);
+      res.status(500).json({ error: 'Failed to login' });
+    } else {
+      if (results.length > 0) {
+        const user = results[0];
+        res.json({ success: true, message: 'Login successful', userId: user.member_id, name: user.name, balance: user.balance });
+      } else {
+        res.status(401).json({ success: false, message: 'Invalid username or password' });
+      }
+    }
+  });
+});
+
+app.get('/api/balance', (req, res) => {
+  const userId = req.query.userId;
+  const sql = 'SELECT balance FROM members WHERE member_id = ?';
+  connection.query(sql, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching balance:', err);
+      res.status(500).json({ error: 'Failed to fetch balance' });
+    } else {
+      if (results.length > 0) {
+        res.json({ balance: results[0].balance });
+      } else {
+        res.status(404).json({ error: 'User not found' });
+      }
+    }
+  });
+});
+
 app.post('/api/updateBalance', async (req, res) => {
   const { memberId, newBalance } = req.body;
 
@@ -53,33 +101,126 @@ app.post('/api/updateBalance', async (req, res) => {
   }
 });
 
-app.post('/api/order', async (req, res) => {
-  const { orderId, orderDate, orderedItems, memberId, tableId, paymentId, orderStatusId, paymentStatusId } = req.body;
+// app.post('/api/order', async (req, res) => {
+//   const { orderId, orderDate, orderedItems, memberId, tableId, paymentId, orderStatusId, paymentStatusId } = req.body;
+
+//   try {
+//     const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
+
+//     connection.beginTransaction(async (err) => {
+//       if (err) {
+//         throw err;
+//       }
+
+//       try {
+//         const orderSql = 'INSERT INTO `order` (order_id, order_date, table_id, payment_id, member_id, order_status_id, payment_status_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
+//         await new Promise((resolve, reject) => {
+//           connection.query(orderSql, [orderId, formattedOrderDate, tableId, paymentId, memberId, orderStatusId, paymentStatusId], (err, result) => {
+//             if (err) {
+//               reject(err);
+//             } else {
+//               resolve(result);
+//             }
+//           });
+//         });
+
+//         const orderDetailsValues = orderedItems.map(item => [
+//           orderId,
+//           item.item_id,
+//           item.item_amount,
+//           item.total_price
+//         ]);
+
+//         const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
+
+//         await new Promise((resolve, reject) => {
+//           connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
+//             if (err) {
+//               reject(err);
+//             } else {
+//               resolve(result);
+//             }
+//           });
+//         });
+
+//         connection.commit((err) => {
+//           if (err) {
+//             throw err;
+//           } else {
+//             console.log('Order placed successfully');
+//             res.json({ message: 'Order placed successfully', orderId: orderId });
+//           }
+//         });
+//       } catch (error) {
+//         connection.rollback(() => {
+//           console.error('Error inserting order:', error);
+//           res.status(500).json({ error: 'Failed to place order' });
+//         });
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Error generating orderId:', error);
+//     res.status(500).json({ error: 'Failed to generate orderId' });
+//   }
+// });
+
+app.post('/api/order_details', (req, res) => {
+  const { items } = req.body;  // Ensure we're only receiving items in the request body
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Items are required' });
+  }
+
+  // Prepare order details values
+  const orderDetailsValues = items.map(item => [
+    item.item_id,
+    item.item_amount,
+    item.total_price
+  ]);
+
+  const orderDetailsSql = 'INSERT INTO order_details (item_id, item_amount, total_price) VALUES ?';
+
+  // Log the query for debugging
+  console.log('Executing query:', connection.format(orderDetailsSql, [orderDetailsValues]));
+
+  connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
+    if (err) {
+      console.error('Error inserting order details:', err);
+      return res.status(500).send('Error saving order details');
+    }
+    res.status(200).send('Order details saved successfully');
+  });
+});
+
+app.post('/api/place_order', async (req, res) => {
+  const { orderDate, orderedItems, memberId, tableId, paymentId } = req.body;
+
+  if (!orderedItems || orderedItems.length === 0) {
+    return res.status(400).json({ error: 'No items in the order' });
+  }
 
   try {
-    // Format orderDate to the correct format
     const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
 
-    // Begin transaction
     connection.beginTransaction(async (err) => {
       if (err) {
         throw err;
       }
 
       try {
-        // Insert order into the database
-        const orderSql = 'INSERT INTO order (order_id, order_date, table_id, payment_id, member_id, order_status_id, payment_status_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
-        await new Promise((resolve, reject) => {
-          connection.query(orderSql, [orderId, formattedOrderDate, tableId, paymentId, memberId, orderStatusId, paymentStatusId], (err, result) => {
+        // Insert ke tabel order
+        const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
+        const orderResult = await new Promise((resolve, reject) => {
+          connection.query(orderSql, [0, 0, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
             if (err) {
-              reject(err);
-            } else {
-              resolve(result);
+              return reject(err);
             }
+            resolve(result);
           });
         });
 
-        // Insert order details into the database
+        const orderId = orderResult.insertId;
+
         const orderDetailsValues = orderedItems.map(item => [
           orderId,
           item.item_id,
@@ -92,68 +233,121 @@ app.post('/api/order', async (req, res) => {
         await new Promise((resolve, reject) => {
           connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
             if (err) {
-              reject(err);
-            } else {
-              resolve(result);
+              return reject(err);
             }
+            resolve(result);
           });
         });
 
-        // Commit transaction
         connection.commit((err) => {
           if (err) {
-            throw err;
-          } else {
-            console.log('Order placed successfully');
-            res.json({ message: 'Order placed successfully', orderId: orderId });
+            return connection.rollback(() => {
+              throw err;
+            });
           }
+          res.status(200).json({ message: 'Order placed successfully', orderId });
         });
       } catch (error) {
-        // Rollback transaction in case of error
         connection.rollback(() => {
-          console.error('Error inserting order:', error);
+          console.error('Error placing order:', error);
           res.status(500).json({ error: 'Failed to place order' });
         });
       }
     });
   } catch (error) {
-    console.error('Error generating orderId:', error);
-    res.status(500).json({ error: 'Failed to generate orderId' });
+    console.error('Error placing order:', error);
+    res.status(500).json({ error: 'Failed to place order' });
   }
 });
 
-app.post('/api/addOrderDetails', async (req, res) => {
-  const { orderId, orderedItems } = req.body;
+app.post('/api/order', async (req, res) => {
+  const { orderDate, orderedItems, memberId, tableId, paymentId } = req.body;
 
-  if (!orderId || !Array.isArray(orderedItems) || orderedItems.length === 0) {
-    return res.status(400).json({ error: 'orderId and orderedItems are required' });
+  if (!orderedItems || orderedItems.length === 0) {
+    return res.status(400).json({ error: 'No items in the order' });
   }
 
   try {
-    // Menyimpan data order details
-    const orderDetailsValues = orderedItems.map(item => [
-      orderId,
-      item.item_id,
-      item.item_amount,
-      item.total_price
-    ]);
+    const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
 
-    const sql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
+    connection.beginTransaction(async (err) => {
+      if (err) {
+        throw err;
+      }
 
-    await new Promise((resolve, reject) => {
-      connection.query(sql, [orderDetailsValues], (err, result) => {
-        if (err) {
-          console.error('Error inserting order details:', err);
-          reject(err);
-        } else {
-          res.json({ message: 'Order details added successfully' });
-          resolve();
-        }
-      });
+      try {
+        // Insert into `order` table
+        const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
+        const orderResult = await new Promise((resolve, reject) => {
+          connection.query(orderSql, [0, 0, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve(result);
+          });
+        });
+
+        const orderId = orderResult.insertId;
+
+        // Insert into `order_details` table
+        const orderDetailsValues = orderedItems.map(item => [
+          orderId,
+          item.item_id,
+          item.item_amount,
+          item.total_price
+        ]);
+
+        const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
+
+        await new Promise((resolve, reject) => {
+          connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve(result);
+          });
+        });
+
+        // Commit the transaction
+        connection.commit((err) => {
+          if (err) {
+            return connection.rollback(() => {
+              throw err;
+            });
+          }
+          res.status(200).json({ message: 'Order placed successfully', orderId });
+        });
+      } catch (error) {
+        connection.rollback(() => {
+          console.error('Error placing order:', error);
+          res.status(500).json({ error: 'Failed to place order' });
+        });
+      }
     });
   } catch (error) {
-    console.error('Error adding order details:', error);
-    res.status(500).json({ error: 'Failed to add order details' });
+    console.error('Error placing order:', error);
+    res.status(500).json({ error: 'Failed to place order' });
+  }
+});
+
+app.post('/api/complete_order', async (req, res) => {
+  const { orderId, orderDate, memberId } = req.body;
+
+  try {
+    const orderSql = 'INSERT INTO `order` (order_id, order_date, member_id) VALUES (?, ?, ?)';
+
+    connection.query(orderSql, [orderId, orderDate, memberId], (err, result) => {
+      if (err) {
+        console.error('Error completing order:', err);
+        return res.status(500).json({ error: 'Failed to complete order' });
+      } else {
+        console.log('Order completed successfully');
+        res.status(200).json({ message: 'Order completed successfully', orderId: orderId });
+      }
+    });
+  } catch (error) {
+    console.error('Error completing order:', error);
+    res.status(500).json({ error: 'Failed to complete order' });
   }
 });
 
@@ -165,7 +359,10 @@ app.get('/api/order', (req, res) => {
           CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
           GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
           SUM(od.total_price) AS total_price,
-          m.name AS user_name
+          m.name AS user_name,
+          ps.payment_status,
+          t.table_name AS table_number,
+          p.payment_description AS payment_method
       FROM
           \`order\` o
       JOIN
@@ -174,13 +371,19 @@ app.get('/api/order', (req, res) => {
           menu_items mi ON od.item_id = mi.item_id
       JOIN
           members m ON o.member_id = m.member_id
-      `;
+      JOIN
+          payment_status ps ON o.payment_status_id = ps.payment_status_id
+      JOIN
+          \`table\` t ON o.table_id = t.table_id
+      JOIN
+          payment p ON o.payment_id = p.payment_id
+  `;
   if (status === 'pending') {
     sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'pending')";
   } else if (status === 'completed') {
     sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'completed')";
   }
-  sql += "GROUP BY o.order_id, o.order_date, m.name";
+  sql += "GROUP BY o.order_id, o.order_date, m.name, ps.payment_status, t.table_name, p.payment_description";
   connection.query(sql, (err, results) => {
       if (err) {
           console.error('Error fetching orders from database:', err);
@@ -207,21 +410,17 @@ app.post('/api/menu_items', upload.single('avatar'), async (req, res) => {
     const { item_name, price, category_id } = req.body;
     const uploadedFile = req.file;
 
-    // Sanitize the filename
     const sanitizedFilename = item_name.toLowerCase().replace(/\s+/g, '-');
     const originalExtension = path.extname(uploadedFile.originalname);
 
-    // Create the target directory if it doesn't exist
     const targetDirectory = path.join(__dirname, 'public', 'uploads');
     await fs.mkdir(targetDirectory, { recursive: true });
 
-    // Move the file to the target directory with the sanitized filename and original extension
     const targetPath = path.join(targetDirectory, sanitizedFilename + originalExtension);
     await fs.rename(uploadedFile.path, targetPath);
 
     console.log('File moved successfully');
 
-    // Insert menu item into the database
     const sql = 'INSERT INTO menu_items (item_name, price, image_source, category_id) VALUES (?, ?, ?, ?)';
     connection.query(sql, [item_name, price, sanitizedFilename + originalExtension, category_id], (err, result) => {
       if (err) {
@@ -244,55 +443,6 @@ app.get('/api/files/:filename', (req, res) => {
   res.json({ url: fileUrl });
 });
 
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  const sql = 'SELECT * FROM members WHERE username = ? AND password = ?';
-  connection.query(sql, [username, password], (err, results) => {
-    if (err) {
-      console.error('Error logging in:', err);
-      res.status(500).json({ error: 'Failed to login' });
-    } else {
-      if (results.length > 0) {
-        const user = results[0];
-        res.json({ success: true, message: 'Login successful', userId: user.member_id, name: user.name, balance: user.balance });
-      } else {
-        res.status(401).json({ success: false, message: 'Invalid username or password' });
-      }
-    }
-  });
-});
-
-app.post('/api/register', (req, res) => {
-  const { name, email, username, password } = req.body;
-  const sql = 'INSERT INTO members (name, email, username, password) VALUES (?, ?, ?, ?)';
-  connection.query(sql, [name, email, username, password], (err, result) => {
-    if (err) {
-      console.error('Error registering:', err);
-      res.status(500).json({ error: 'Failed to register' });
-    } else {
-      res.json({ success: true, message: 'Registration successful' });
-    }
-  });
-});
-
-// app.post('/api/forgotpassword', (req, res) => {
-//   const { email } = req.body;
-//   const sql = 'SELECT * FROM users WHERE email = ?';
-//   connection.query(sql, [email], (err, results) => {
-//     if (err) {
-//       console.error('Error retrieving user data:', err);
-//       res.status(500).json({ error: 'Failed to retrieve user data' });
-//     } else {
-//       if (results.length > 0) {
-//         // Implement logic to send password reset link or code to the user's email
-//         res.json({ success: true, message: 'Password reset instructions sent to your email' });
-//       } else {
-//         res.status(404).json({ success: false, message: 'Email not found' });
-//       }
-//     }
-//   });
-// });
-
 app.get('/api/user/:id', (req, res) => {
   const userId = req.params.id;
   const sql = 'SELECT name, balance FROM members WHERE member_id = ?';
@@ -310,32 +460,13 @@ app.get('/api/user/:id', (req, res) => {
   });
 });
 
-app.get('/api/balance', (req, res) => {
-  const userId = req.query.userId;
-  const sql = 'SELECT balance FROM members WHERE member_id = ?';
-  connection.query(sql, [userId], (err, results) => {
-    if (err) {
-      console.error('Error fetching balance:', err);
-      res.status(500).json({ error: 'Failed to fetch balance' });
-    } else {
-      if (results.length > 0) {
-        res.json({ balance: results[0].balance });
-      } else {
-        res.status(404).json({ error: 'User not found' });
-      }
-    }
-  });
-});
-
 app.post('/api/topup', (req, res) => {
   const { member_id, amount } = req.body;
 
-  // Validasi input
   if (!member_id || !amount) {
     return res.status(400).json({ error: 'Member ID and amount are required' });
   }
 
-  // Ambil saldo user dari database
   const sqlSelect = 'SELECT * FROM members WHERE member_id = ?';
   connection.query(sqlSelect, [member_id], (err, results) => {
     if (err) {
@@ -350,7 +481,6 @@ app.post('/api/topup', (req, res) => {
     const user = results[0];
     const newBalance = parseFloat(user.balance) + parseFloat(amount);
 
-    // Update saldo user di database
     const sqlUpdate = 'UPDATE members SET balance = ? WHERE member_id = ?';
     connection.query(sqlUpdate, [newBalance, member_id], (updateErr, updateResult) => {
       if (updateErr) {
@@ -358,7 +488,6 @@ app.post('/api/topup', (req, res) => {
         return res.status(500).json({ error: 'Failed to update balance' });
       }
 
-      // Simpan data top-up ke tabel top_up
       const sqlInsertTopUp = 'INSERT INTO top_up (topup_amount, member_id) VALUES (?, ?)';
       connection.query(sqlInsertTopUp, [amount, member_id], (insertErr, insertResult) => {
         if (insertErr) {
@@ -372,33 +501,21 @@ app.post('/api/topup', (req, res) => {
   });
 });
 
-app.post('/api/updateOrderStatus', async (req, res) => {
+app.post('/api/updateOrderStatus', (req, res) => {
   const { orderId, status } = req.body;
-  console.log(`Received request to update order status. orderId: ${orderId}, status: ${status}`);
+  
+  // Convert status to order_status_id
+  let status_id = status === 'completed' ? 1 : 0;
 
-  try {
-    const sql = 'UPDATE `order` SET order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = ?) WHERE order_id = ?';
-    const result = await new Promise((resolve, reject) => {
-      connection.query(sql, [status, orderId], (err, result) => {
-        if (err) {
-          console.error('Error updating order status:', err);
-          reject(err);
-        } else {
-          console.log(`Order status updated successfully. Affected rows: ${result.affectedRows}`);
-          resolve(result);
-        }
-      });
-    });
-
-    if (result.affectedRows > 0) {
-      res.json({ message: 'Order status updated successfully' });
+  const sql = "UPDATE `order` SET order_status_id = ? WHERE order_id = ?";
+  connection.query(sql, [status_id, orderId], (err, results) => {
+    if (err) {
+      console.error('Error updating order status:', err);
+      res.status(500).json({ error: 'Failed to update order status' });
     } else {
-      res.status(404).json({ error: 'Order not found' });
+      res.json({ message: 'Order status updated successfully' });
     }
-  } catch (error) {
-    console.error('Error updating order status:', error);
-    res.status(500).json({ error: 'Failed to update order status' });
-  }
+  });
 });
 
 app.get('/api/categories/:id', (req, res) => {
@@ -418,7 +535,7 @@ app.get('/api/categories/:id', (req, res) => {
 });
 
 app.get('/api/categories', (req, res) => {
-  const sql = 'SELECT * FROM categories'; // Pastikan nama tabel dan kolom sesuai dengan skema database
+  const sql = 'SELECT * FROM categories';
   connection.query(sql, (err, results) => {
     if (err) {
       console.error('Error fetching categories from database:', err);
@@ -428,8 +545,6 @@ app.get('/api/categories', (req, res) => {
     }
   });
 });
-
-
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
