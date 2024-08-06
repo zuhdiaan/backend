@@ -9,11 +9,12 @@ const upload = multer({ dest: 'public/uploads/' });
 const path = require('path');
 const fs = require('fs').promises;
 const moment = require('moment');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 require('dotenv').config();
 
 app.use(bodyParser.json());
 app.use(cors());
-
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
 const connection = mysql.createConnection({
@@ -31,19 +32,47 @@ connection.connect((err) => {
   console.log('Connected to MySQL as id ' + connection.threadId);
 });
 
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: process.env.EMAIL_PORT,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
 app.post('/api/register', (req, res) => {
   const { name, email, username, password } = req.body;
-  const sql = 'INSERT INTO members (name, email, username, password) VALUES (?, ?, ?, ?)';
-  connection.query(sql, [name, email, username, password], (err, result) => {
+  const token = crypto.randomBytes(20).toString('hex');
+
+  const sql = 'INSERT INTO members (name, email, username, password, email_verification_token, email_verified) VALUES (?, ?, ?, ?, ?, false)';
+  connection.query(sql, [name, email, username, password, token], (err, result) => {
     if (err) {
       console.error('Error registering:', err);
-      res.status(500).json({ error: 'Failed to register' });
-    } else {
-      res.json({ success: true, message: 'Registration successful' });
+      return res.status(500).json({ error: 'Failed to register' });
     }
+
+    const mailOptions = {
+      to: email,
+      from: process.env.EMAIL_USER,
+      subject: 'Email Verification',
+      text: `Thank you for registering. Please verify your email by clicking the link below:\n\n
+        http://${req.headers.host}/api/verify-email/${token}\n\n
+        If you did not request this, please ignore this email.\n`,
+    };
+
+    transporter.sendMail(mailOptions, (sendErr) => {
+      if (sendErr) {
+        console.error('Error sending email:', sendErr);
+        return res.status(500).json({ error: 'Failed to send email' });
+      }
+
+      res.status(200).json({ message: 'Registration successful, verification email sent' });
+    });
   });
 });
 
+// User login endpoint
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   const sql = 'SELECT * FROM members WHERE username = ? AND password = ?';
@@ -62,6 +91,7 @@ app.post('/api/login', (req, res) => {
   });
 });
 
+// Fetch balance endpoint
 app.get('/api/balance', (req, res) => {
   const userId = req.query.userId;
   const sql = 'SELECT balance FROM members WHERE member_id = ?';
@@ -101,68 +131,126 @@ app.post('/api/updateBalance', async (req, res) => {
   }
 });
 
-// app.post('/api/order', async (req, res) => {
-//   const { orderId, orderDate, orderedItems, memberId, tableId, paymentId, orderStatusId, paymentStatusId } = req.body;
+app.post('/api/forgot-password', (req, res) => {
+  const { email, username } = req.body;
 
-//   try {
-//     const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
+  const sql = 'SELECT * FROM members WHERE email = ? AND username = ?';
+  connection.query(sql, [email, username], (err, results) => {
+    if (err) {
+      console.error('Error fetching user:', err);
+      return res.status(500).json({ error: 'Failed to fetch user' });
+    }
 
-//     connection.beginTransaction(async (err) => {
-//       if (err) {
-//         throw err;
-//       }
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-//       try {
-//         const orderSql = 'INSERT INTO `order` (order_id, order_date, table_id, payment_id, member_id, order_status_id, payment_status_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
-//         await new Promise((resolve, reject) => {
-//           connection.query(orderSql, [orderId, formattedOrderDate, tableId, paymentId, memberId, orderStatusId, paymentStatusId], (err, result) => {
-//             if (err) {
-//               reject(err);
-//             } else {
-//               resolve(result);
-//             }
-//           });
-//         });
+    const user = results[0];
+    const token = crypto.randomBytes(20).toString('hex');
+    const tokenExpiration = Date.now() + 3600000; // 1 hour from now
 
-//         const orderDetailsValues = orderedItems.map(item => [
-//           orderId,
-//           item.item_id,
-//           item.item_amount,
-//           item.total_price
-//         ]);
+    const updateSql = 'UPDATE members SET reset_password_token = ?, reset_password_expires = ? WHERE email = ? AND username = ?';
+    connection.query(updateSql, [token, tokenExpiration, email, username], (updateErr) => {
+      if (updateErr) {
+        console.error('Error setting reset token:', updateErr);
+        return res.status(500).json({ error: 'Failed to set reset token' });
+      }
 
-//         const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
+      const mailOptions = {
+        to: user.email,
+        from: process.env.EMAIL_USER,
+        subject: 'Password Reset',
+        text: `You are receiving this because you (or someone else) have requested the reset of the password for your account.\n\n
+          Please click on the following link, or paste this into your browser to complete the process:\n\n
+          http://10.0.2.2:3000/reset-password/${token}\n\n
+          If you did not request this, please ignore this email and your password will remain unchanged.\n`,
+      };
 
-//         await new Promise((resolve, reject) => {
-//           connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
-//             if (err) {
-//               reject(err);
-//             } else {
-//               resolve(result);
-//             }
-//           });
-//         });
+      transporter.sendMail(mailOptions, (sendErr) => {
+        if (sendErr) {
+          console.error('Error sending email:', sendErr);
+          return res.status(500).json({ error: 'Failed to send email' });
+        }
 
-//         connection.commit((err) => {
-//           if (err) {
-//             throw err;
-//           } else {
-//             console.log('Order placed successfully');
-//             res.json({ message: 'Order placed successfully', orderId: orderId });
-//           }
-//         });
-//       } catch (error) {
-//         connection.rollback(() => {
-//           console.error('Error inserting order:', error);
-//           res.status(500).json({ error: 'Failed to place order' });
-//         });
-//       }
-//     });
-//   } catch (error) {
-//     console.error('Error generating orderId:', error);
-//     res.status(500).json({ error: 'Failed to generate orderId' });
-//   }
-// });
+        res.status(200).json({ message: 'Email sent successfully' });
+      });
+    });
+  });
+});
+
+app.get('/reset-password/:token', (req, res) => {
+  const { token } = req.params;
+
+  const sql = 'SELECT * FROM members WHERE reset_password_token = ? AND reset_password_expires > ?';
+  connection.query(sql, [token, Date.now()], (err, results) => {
+    if (err) {
+      console.error('Error fetching user:', err);
+      return res.status(500).json({ error: 'Failed to fetch user' });
+    }
+
+    if (results.length === 0) {
+      return res.status(400).json({ error: 'Password reset token is invalid or has expired' });
+    }
+
+    // Redirect to frontend reset password page with token
+    res.redirect(`http://10.0.2.2:3000/reset-password?token=${token}`);
+  });
+});
+
+app.post('/api/reset-password/:token', (req, res) => {
+  const { token } = req.params;
+  const { password } = req.body;
+
+  const sql = 'SELECT * FROM members WHERE reset_password_token = ? AND reset_password_expires > ?';
+  connection.query(sql, [token, Date.now()], (err, results) => {
+    if (err) {
+      console.error('Error fetching user:', err);
+      return res.status(500).json({ error: 'Failed to fetch user' });
+    }
+
+    if (results.length === 0) {
+      return res.status(400).json({ error: 'Password reset token is invalid or has expired' });
+    }
+
+    const user = results[0];
+    const updateSql = 'UPDATE members SET password = ?, reset_password_token = NULL, reset_password_expires = NULL WHERE email = ?';
+    connection.query(updateSql, [password, user.email], (updateErr) => {
+      if (updateErr) {
+        console.error('Error resetting password:', updateErr);
+        return res.status(500).json({ error: 'Failed to reset password' });
+      }
+
+      res.status(200).json({ message: 'Password has been reset successfully' });
+    });
+  });
+});
+
+app.get('/api/verify-email/:token', (req, res) => {
+  const { token } = req.params;
+
+  const sql = 'SELECT * FROM members WHERE email_verification_token = ?';
+  connection.query(sql, [token], (err, results) => {
+    if (err) {
+      console.error('Error fetching user:', err);
+      return res.status(500).json({ error: 'Failed to fetch user' });
+    }
+
+    if (results.length === 0) {
+      return res.status(400).json({ error: 'Invalid verification token' });
+    }
+
+    const user = results[0];
+    const updateSql = 'UPDATE members SET email_verified = true, email_verification_token = NULL WHERE email = ?';
+    connection.query(updateSql, [user.email], (updateErr) => {
+      if (updateErr) {
+        console.error('Error verifying email:', updateErr);
+        return res.status(500).json({ error: 'Failed to verify email' });
+      }
+
+      res.status(200).json({ message: 'Email verified successfully' });
+    });
+  });
+});
 
 app.put('/api/menu_items/:item_id/availability', (req, res) => {
   const itemId = req.params.item_id;
@@ -196,14 +284,15 @@ app.post('/api/order_details', (req, res) => {
   const orderDetailsSql = 'INSERT INTO order_details (item_id, item_amount, total_price) VALUES ?';
 
   // Log the query for debugging
-  console.log('Executing query:', connection.format(orderDetailsSql, [orderDetailsValues]));
+  console.log(connection.format(orderDetailsSql, [orderDetailsValues]));
 
   connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
     if (err) {
       console.error('Error inserting order details:', err);
-      return res.status(500).send('Error saving order details');
+      return res.status(500).json({ error: 'Failed to insert order details' });
     }
-    res.status(200).send('Order details saved successfully');
+
+    res.json({ message: 'Order details inserted successfully' });
   });
 });
 
