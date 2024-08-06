@@ -164,6 +164,21 @@ app.post('/api/updateBalance', async (req, res) => {
 //   }
 // });
 
+app.put('/api/menu_items/:item_id/availability', (req, res) => {
+  const itemId = req.params.item_id;
+  const { is_active } = req.body;
+
+  const sql = 'UPDATE menu_items SET is_active = ? WHERE item_id = ?';
+  connection.query(sql, [is_active, itemId], (err, result) => {
+    if (err) {
+      console.error('Error updating item availability:', err);
+      res.status(500).json({ error: 'Failed to update item availability' });
+    } else {
+      res.json({ message: 'Item availability updated successfully' });
+    }
+  });
+});
+
 app.post('/api/order_details', (req, res) => {
   const { items } = req.body;  // Ensure we're only receiving items in the request body
 
@@ -395,9 +410,10 @@ app.get('/api/order', (req, res) => {
 });
 
 app.get('/api/menu_items', (req, res) => {
-  const sql = 'SELECT item_id, item_name, price, image_source, category_id FROM menu_items';
+  const sql = 'SELECT item_id, item_name, price, image_source, category_id, is_active FROM menu_items';
   connection.query(sql, (err, results) => {
     if (err) {
+      console.error('Error fetching menu items:', err);
       res.status(500).json({ error: 'Failed to fetch menu items' });
     } else {
       res.json(results);
