@@ -345,6 +345,82 @@ app.post('/api/order', async (req, res) => {
   }
 });
 
+app.post('/api/cancelOrder', (req, res) => {
+  const { orderId } = req.body;
+
+  // Langkah 1: Ubah status pesanan menjadi 'canceled'
+  const updateOrderStatusSql = "UPDATE `order` SET order_status_id = 2 WHERE order_id = ?";
+
+  connection.beginTransaction((err) => {
+    if (err) {
+      console.error('Error starting transaction:', err);
+      return res.status(500).json({ error: 'Failed to start transaction' });
+    }
+
+    connection.query(updateOrderStatusSql, [orderId], (err, results) => {
+      if (err) {
+        console.error('Error updating order status:', err);
+        return connection.rollback(() => {
+          res.status(500).json({ error: 'Failed to update order status' });
+        });
+      }
+
+      // Langkah 2: Ambil total harga order dan member_id dari order_details dan order
+      const getOrderDetailsSql = `
+        SELECT SUM(od.total_price) AS total_refund, o.member_id 
+        FROM order_details od 
+        JOIN \`order\` o ON od.order_id = o.order_id 
+        WHERE od.order_id = ?
+        GROUP BY o.member_id`;
+
+      connection.query(getOrderDetailsSql, [orderId], (err, orderDetails) => {
+        if (err) {
+          console.error('Error fetching order details:', err);
+          return connection.rollback(() => {
+            res.status(500).json({ error: 'Failed to fetch order details' });
+          });
+        }
+
+        if (orderDetails.length === 0) {
+          return connection.rollback(() => {
+            res.status(404).json({ error: 'Order not found' });
+          });
+        }
+
+        const totalRefund = orderDetails[0].total_refund;
+        const memberId = orderDetails[0].member_id;
+
+        // Langkah 3: Update saldo anggota
+        const updateMemberBalanceSql = `
+          UPDATE members 
+          SET balance = balance + ? 
+          WHERE member_id = ?`;
+
+        connection.query(updateMemberBalanceSql, [totalRefund, memberId], (err, results) => {
+          if (err) {
+            console.error('Error updating member balance:', err);
+            return connection.rollback(() => {
+              res.status(500).json({ error: 'Failed to update member balance' });
+            });
+          }
+
+          // Langkah 4: Commit transaction
+          connection.commit((err) => {
+            if (err) {
+              console.error('Error committing transaction:', err);
+              return connection.rollback(() => {
+                res.status(500).json({ error: 'Failed to commit transaction' });
+              });
+            }
+
+            res.json({ message: 'Order canceled and refunded successfully' });
+          });
+        });
+      });
+    });
+  });
+});
+
 app.post('/api/complete_order', async (req, res) => {
   const { orderId, orderDate, memberId } = req.body;
 
