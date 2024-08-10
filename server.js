@@ -43,31 +43,58 @@ const transporter = nodemailer.createTransport({
 
 app.post('/api/register', (req, res) => {
   const { name, email, username, password } = req.body;
-  const token = crypto.randomBytes(20).toString('hex');
 
-  const sql = 'INSERT INTO members (name, email, username, password, email_verification_token, email_verified) VALUES (?, ?, ?, ?, ?, false)';
-  connection.query(sql, [name, email, username, password, token], (err, result) => {
+  // Check if email format is valid using regex
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Invalid Email Format' });
+  }
+
+  // Check if username or email already exists
+  const checkSql = 'SELECT * FROM members WHERE email = ? OR username = ?';
+  connection.query(checkSql, [email, username], (err, results) => {
     if (err) {
-      console.error('Error registering:', err);
+      console.error('Error checking existing user:', err);
       return res.status(500).json({ error: 'Failed to register' });
     }
 
-    const mailOptions = {
-      to: email,
-      from: process.env.EMAIL_USER,
-      subject: 'Email Verification',
-      text: `Thank you for registering. Please verify your email by clicking the link below:\n\n
-        http://${req.headers.host}/api/verify-email/${token}\n\n
-        If you did not request this, please ignore this email.\n`,
-    };
+    if (results.length > 0) {
+      if (results[0].email === email) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+      if (results[0].username === username) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+    }
 
-    transporter.sendMail(mailOptions, (sendErr) => {
-      if (sendErr) {
-        console.error('Error sending email:', sendErr);
-        return res.status(500).json({ error: 'Failed to send email' });
+    // Generate email verification token
+    const token = crypto.randomBytes(20).toString('hex');
+
+    // Insert the new user into the database
+    const sql = 'INSERT INTO members (name, email, username, password, email_verification_token, email_verified) VALUES (?, ?, ?, ?, ?, false)';
+    connection.query(sql, [name, email, username, password, token], (err, result) => {
+      if (err) {
+        console.error('Error registering:', err);
+        return res.status(500).json({ error: 'Failed to register' });
       }
 
-      res.status(200).json({ message: 'Registration successful, verification email sent' });
+      const mailOptions = {
+        to: email,
+        from: process.env.EMAIL_USER,
+        subject: 'Email Verification',
+        text: `Thank you for registering. Please verify your email by clicking the link below:\n\n
+          http://${req.headers.host}/api/verify-email/${token}\n\n
+          If you did not request this, please ignore this email.\n`,
+      };
+
+      transporter.sendMail(mailOptions, (sendErr) => {
+        if (sendErr) {
+          console.error('Error sending email:', sendErr);
+          return res.status(500).json({ error: 'Failed to send email' });
+        }
+
+        res.status(200).json({ message: 'Registration successful, verification email sent' });
+      });
     });
   });
 });
