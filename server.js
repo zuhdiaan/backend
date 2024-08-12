@@ -161,6 +161,7 @@ app.post('/api/updateBalance', async (req, res) => {
 app.post('/api/forgot-password', (req, res) => {
   const { email, username } = req.body;
 
+  // Cari user berdasarkan email dan username
   const sql = 'SELECT * FROM members WHERE email = ? AND username = ?';
   connection.query(sql, [email, username], (err, results) => {
     if (err) {
@@ -174,8 +175,9 @@ app.post('/api/forgot-password', (req, res) => {
 
     const user = results[0];
     const token = crypto.randomBytes(20).toString('hex');
-    const tokenExpiration = Date.now() + 3600000; // 1 hour from now
+    const tokenExpiration = Date.now() + 3600000; // 1 jam dari sekarang
 
+    // Update user dengan token reset password
     const updateSql = 'UPDATE members SET reset_password_token = ?, reset_password_expires = ? WHERE email = ? AND username = ?';
     connection.query(updateSql, [token, tokenExpiration, email, username], (updateErr) => {
       if (updateErr) {
@@ -183,13 +185,14 @@ app.post('/api/forgot-password', (req, res) => {
         return res.status(500).json({ error: 'Failed to set reset token' });
       }
 
+      // Kirim email dengan token reset password
       const mailOptions = {
         to: user.email,
         from: process.env.EMAIL_USER,
         subject: 'Password Reset',
         text: `You are receiving this because you (or someone else) have requested the reset of the password for your account.\n\n
           Please click on the following link, or paste this into your browser to complete the process:\n\n
-          http://10.0.2.2:3000/reset-password/${token}\n\n
+          http://${req.headers.host}/reset-password/${token}\n\n
           If you did not request this, please ignore this email and your password will remain unchanged.\n`,
       };
 
@@ -199,7 +202,7 @@ app.post('/api/forgot-password', (req, res) => {
           return res.status(500).json({ error: 'Failed to send email' });
         }
 
-        res.status(200).json({ message: 'Email sent successfully' });
+        res.status(200).json({ message: 'Password reset email sent successfully' });
       });
     });
   });
@@ -219,7 +222,7 @@ app.get('/reset-password/:token', (req, res) => {
       return res.status(400).json({ error: 'Password reset token is invalid or has expired' });
     }
 
-    // Redirect to frontend reset password page with token
+    // Redirect ke halaman frontend reset password dengan token
     res.redirect(`http://10.0.2.2:3000/reset-password?token=${token}`);
   });
 });
@@ -228,6 +231,7 @@ app.post('/api/reset-password/:token', (req, res) => {
   const { token } = req.params;
   const { password } = req.body;
 
+  // Cari user berdasarkan token reset password
   const sql = 'SELECT * FROM members WHERE reset_password_token = ? AND reset_password_expires > ?';
   connection.query(sql, [token, Date.now()], (err, results) => {
     if (err) {
@@ -559,45 +563,57 @@ app.post('/api/complete_order', async (req, res) => {
 });
 
 app.get('/api/order', (req, res) => {
-  const status = req.query.status;
+  const orderId = req.query.orderId; 
+  const status = req.query.status; // Pastikan status didefinisikan jika akan digunakan
+
   let sql = `
-      SELECT
-          o.order_id,
-          CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
-          GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
-          SUM(od.total_price) AS total_price,
-          m.name AS user_name,
-          ps.payment_status,
-          t.table_name AS table_number,
-          p.payment_description AS payment_method
-      FROM
-          \`order\` o
-      JOIN
-          order_details od ON o.order_id = od.order_id
-      JOIN
-          menu_items mi ON od.item_id = mi.item_id
-      JOIN
-          members m ON o.member_id = m.member_id
-      JOIN
-          payment_status ps ON o.payment_status_id = ps.payment_status_id
-      JOIN
-          \`table\` t ON o.table_id = t.table_id
-      JOIN
-          payment p ON o.payment_id = p.payment_id
+    SELECT
+      o.order_id,
+      CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
+      GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
+      SUM(od.total_price) AS total_price,
+      m.name AS user_name,
+      ps.payment_status,
+      t.table_name AS table_number,
+      p.payment_description AS payment_method
+    FROM
+      \`order\` o
+    JOIN
+      order_details od ON o.order_id = od.order_id
+    JOIN
+      menu_items mi ON od.item_id = mi.item_id
+    JOIN
+      members m ON o.member_id = m.member_id
+    JOIN
+      payment_status ps ON o.payment_status_id = ps.payment_status_id
+    JOIN
+      \`table\` t ON o.table_id = t.table_id
+    JOIN
+      payment p ON o.payment_id = p.payment_id
   `;
-  if (status === 'pending') {
+
+  // Hanya tambahkan filter berdasarkan status jika status didefinisikan
+  if (orderId) {
+    sql += `WHERE o.order_id = ?`;
+  } else if (status === 'pending') {
     sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'pending')";
   } else if (status === 'completed') {
     sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'completed')";
   }
+
   sql += "GROUP BY o.order_id, o.order_date, m.name, ps.payment_status, t.table_name, p.payment_description";
-  connection.query(sql, (err, results) => {
-      if (err) {
-          console.error('Error fetching orders from database:', err);
-          res.status(500).json({ error: 'Failed to fetch orders' });
+
+  connection.query(sql, [orderId], (err, results) => {
+    if (err) {
+      console.error('Error fetching orders from database:', err);
+      res.status(500).json({ error: 'Failed to fetch orders', details: err.message });
+    } else {
+      if (results.length === 0) {
+        res.status(404).json({ error: 'Order not found' });
       } else {
-          res.json(results);
+        res.json(results[0]); 
       }
+    }
   });
 });
 
