@@ -4,6 +4,7 @@ const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const port = 3000;
+// const HOST = '192.168.1.1'; //JARINGAN
 const multer  = require('multer');
 const upload = multer({ dest: 'public/uploads/' });
 const path = require('path');
@@ -14,7 +15,9 @@ const crypto = require('crypto');
 require('dotenv').config();
 
 app.use(bodyParser.json());
-app.use(cors());
+app.use(cors({
+  origin: '*', // Untuk testing, buka akses dari semua origin
+}));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
 const connection = mysql.createConnection({
@@ -770,6 +773,6 @@ app.get('/api/categories', (req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running at http://0.0.0.0:${port}`);
 });
