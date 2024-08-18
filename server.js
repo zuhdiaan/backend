@@ -195,7 +195,7 @@ app.post('/api/forgot-password', (req, res) => {
         subject: 'Password Reset',
         text: `You are receiving this because you (or someone else) have requested the reset of the password for your account.\n\n
           Please click on the following link, or paste this into your browser to complete the process:\n\n
-          http://${req.headers.host}/reset-password/${token}\n\n
+          http://10.0.2.2:8081/reset-password/${token}\n\n
           If you did not request this, please ignore this email and your password will remain unchanged.\n`,
       };
 
@@ -225,8 +225,8 @@ app.get('/reset-password/:token', (req, res) => {
       return res.status(400).json({ error: 'Password reset token is invalid or has expired' });
     }
 
-    // Redirect ke halaman frontend reset password dengan token
-    res.redirect(`http://10.0.2.2:3000/reset-password?token=${token}`);
+    // Instead of serving a page, redirect to your frontend app
+    res.redirect(`myapp://reset-password?token=${token}`);
   });
 });
 
