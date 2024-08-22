@@ -565,8 +565,8 @@ app.post('/api/complete_order', async (req, res) => {
 });
 
 app.get('/api/order', (req, res) => {
-  const orderId = req.query.orderId; 
-  const status = req.query.status; // Pastikan status didefinisikan jika akan digunakan
+  const orderId = req.query.orderId;
+  const status = req.query.status;
 
   let sql = `
     SELECT
@@ -580,44 +580,54 @@ app.get('/api/order', (req, res) => {
       p.payment_description AS payment_method
     FROM
       \`order\` o
-    JOIN
+    LEFT JOIN
       order_details od ON o.order_id = od.order_id
-    JOIN
+    LEFT JOIN
       menu_items mi ON od.item_id = mi.item_id
-    JOIN
+    LEFT JOIN
       members m ON o.member_id = m.member_id
-    JOIN
+    LEFT JOIN
       payment_status ps ON o.payment_status_id = ps.payment_status_id
-    JOIN
+    LEFT JOIN
       \`table\` t ON o.table_id = t.table_id
-    JOIN
+    LEFT JOIN
       payment p ON o.payment_id = p.payment_id
   `;
 
-  // Hanya tambahkan filter berdasarkan status jika status didefinisikan
+  // Handle fetching specific order by orderId or by status
   if (orderId) {
-    sql += `WHERE o.order_id = ?`;
-  } else if (status === 'pending') {
-    sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'pending')";
-  } else if (status === 'completed') {
-    sql += "WHERE o.order_status_id = (SELECT order_status_id FROM order_status WHERE order_status = 'completed')";
+    sql += `WHERE o.order_id = ? `;
+  } else if (status) {
+    sql += `
+      WHERE o.order_status_id = (
+        SELECT order_status_id FROM order_status WHERE order_status = ?
+      ) `;
   }
 
-  sql += "GROUP BY o.order_id, o.order_date, m.name, ps.payment_status, t.table_name, p.payment_description";
+  sql += `
+    GROUP BY o.order_id, o.order_date, m.name, ps.payment_status, t.table_name, p.payment_description
+  `;
 
-  connection.query(sql, [orderId], (err, results) => {
+  const params = orderId ? [orderId] : status ? [status] : [];
+
+  connection.query(sql, params, (err, results) => {
     if (err) {
       console.error('Error fetching orders from database:', err);
       res.status(500).json({ error: 'Failed to fetch orders', details: err.message });
     } else {
       if (results.length === 0) {
         res.status(404).json({ error: 'Order not found' });
-      } else {
+      } else if (orderId) {
+        // Return a single order for orderId queries
         res.json(results[0]); 
+      } else {
+        // Return all orders for status queries
+        res.json(results);
       }
     }
   });
 });
+
 
 app.get('/api/menu_items', (req, res) => {
   const sql = 'SELECT item_id, item_name, price, image_source, category_id, is_active FROM menu_items';
