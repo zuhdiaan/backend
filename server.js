@@ -12,6 +12,8 @@ const fs = require('fs').promises;
 const moment = require('moment');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+
 require('dotenv').config();
 
 app.use(bodyParser.json());
@@ -46,8 +48,7 @@ const transporter = nodemailer.createTransport({
 
 app.post('/api/register', (req, res) => {
   const { name, email, username, password } = req.body;
-
-  // Check if email format is valid using regex
+  
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     return res.status(400).json({ error: 'Invalid Email Format' });
@@ -73,8 +74,8 @@ app.post('/api/register', (req, res) => {
     // Generate email verification token
     const token = crypto.randomBytes(20).toString('hex');
 
-    // Insert the new user into the database
-    const sql = 'INSERT INTO members (name, email, username, password, email_verification_token, email_verified) VALUES (?, ?, ?, ?, ?, false)';
+    // Insert the new user into the database with role set to 'member'
+    const sql = 'INSERT INTO members (name, email, username, password, email_verification_token, email_verified, role) VALUES (?, ?, ?, ?, ?, false, "member")';
     connection.query(sql, [name, email, username, password, token], (err, result) => {
       if (err) {
         console.error('Error registering:', err);
@@ -99,6 +100,66 @@ app.post('/api/register', (req, res) => {
         res.status(200).json({ message: 'Registration successful, verification email sent' });
       });
     });
+  });
+});
+
+app.post('/api/registerAdmin', async (req, res) => {
+  const { name, email, username, password } = req.body;
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Invalid Email Format' });
+  }
+
+  try {
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    console.log("Hashed Password:", hashedPassword);
+
+    // Automatically assign 'admin' role for admin-side registration
+    const sql = 'INSERT INTO members (name, email, username, password, role) VALUES (?, ?, ?, ?, ?)';
+    connection.query(sql, [name, email, username, hashedPassword, 'admin'], (error, results) => {
+      if (error) {
+        console.error('Error registering admin:', error);
+        return res.status(500).json({ success: false, message: 'Internal Server Error' });
+      }
+      res.json({ success: true, message: 'Admin registered successfully' });
+    });
+  } catch (error) {
+    console.error('Error hashing password:', error);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+});
+
+
+app.post('/api/loginAdmin', (req, res) => {
+  const { username, password } = req.body;
+
+  connection.query('SELECT member_id, password, role FROM members WHERE username = ?', [username], (error, results) => {
+    if (error) {
+      console.error('Database error:', error);
+      return res.status(500).json({ success: false, message: 'Internal Server Error' });
+    }
+
+    if (results.length > 0) {
+      const user = results[0];
+      console.log("Stored Password:", user.password); // Log stored password
+
+      bcrypt.compare(password, user.password, (err, match) => {
+        if (err) {
+          console.error('Bcrypt error:', err);
+          return res.status(500).json({ success: false, message: 'Internal Server Error' });
+        }
+
+        if (match) {
+          res.json({ success: true, member_id: user.member_id, role: user.role });
+        } else {
+          res.json({ success: false, message: 'Username atau password salah.' });
+        }
+      });
+    } else {
+      res.json({ success: false, message: 'Username atau password salah.' });
+    }
   });
 });
 
