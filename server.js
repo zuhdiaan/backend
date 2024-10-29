@@ -947,7 +947,7 @@ app.post('/api/verifyUser', (req, res) => {
       }
   });
 });
-
+  
 // API endpoint to delete user
 app.delete('/api/deleteUser', (req, res) => {
   const { user_id } = req.body; // This should correspond to member_id in your DB
@@ -968,8 +968,29 @@ app.delete('/api/deleteUser', (req, res) => {
 });
 
 app.get('/api/exportOrders', (req, res) => {
-  // SQL query to fetch completed orders
-  const sql = 'SELECT * FROM `order`'; // You can filter by status if needed
+  const sql = `
+    SELECT 
+      o.order_id, 
+      CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time, 
+      GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price) 
+        SEPARATOR ', ') AS items,
+      SUM(od.total_price) AS total_price, 
+      m.name AS user_name, 
+      ps.payment_status, 
+      t.table_name AS table_number, 
+      p.payment_description AS payment_method
+    FROM \`order\` o
+    LEFT JOIN order_details od ON o.order_id = od.order_id
+    LEFT JOIN menu_items mi ON od.item_id = mi.item_id
+    LEFT JOIN members m ON o.member_id = m.member_id
+    LEFT JOIN payment_status ps ON o.payment_status_id = ps.payment_status_id
+    LEFT JOIN \`table\` t ON o.table_id = t.table_id
+    LEFT JOIN payment p ON o.payment_id = p.payment_id
+    WHERE o.order_status_id = (
+      SELECT order_status_id FROM order_status WHERE order_status = 'completed'
+    )
+    GROUP BY o.order_id, o.order_date, m.name, ps.payment_status, t.table_name, p.payment_description;
+  `;
 
   connection.query(sql, (error, results) => {
     if (error) {
@@ -977,19 +998,40 @@ app.get('/api/exportOrders', (req, res) => {
       return res.status(500).json({ error: 'Internal Server Error' });
     }
 
-    // Create a new workbook and add the order data to a worksheet
+    // Reformat data for Excel with null checks
+    const formattedData = results.map(order => {
+      const itemsStr = order.items || ''; // Default to an empty string if null
+      const items = itemsStr
+        .split(', ')
+        .map(itemStr => {
+          const [item_id, item_name, quantity, total_price] = itemStr.split(':');
+          return `${item_name || 'Unknown'} (Qty: ${quantity || 0}, Price: Rp. ${Number(total_price || 0).toFixed(2)})`;
+        })
+        .join('\n');
+
+      return {
+        'Order ID': order.order_id,
+        'Order Date': order.order_time,
+        'User Name': order.user_name || 'Unknown',
+        'Items': items,
+        'Total Price': `Rp. ${Number(order.total_price).toFixed(2)}`,
+        'Payment Status': order.payment_status || 'Unknown',
+        'Table Number': order.table_number || 'Unknown',
+        'Payment Method': order.payment_method || 'Unknown',
+      };
+    });
+
+    // Create Excel workbook and sheet
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(results);
+    const ws = XLSX.utils.json_to_sheet(formattedData);
     XLSX.utils.book_append_sheet(wb, ws, 'Order History');
 
-    // Generate the file as a buffer
+    // Generate Excel file as buffer
     const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
 
-    // Set the response headers for Excel file download
+    // Set response headers and send the file
     res.setHeader('Content-Disposition', 'attachment; filename=order_history.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-
-    // Send the buffer as a response
     res.end(excelBuffer);
   });
 });
