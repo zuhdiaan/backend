@@ -13,6 +13,7 @@ const moment = require('moment');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const XLSX = require('xlsx');
 
 require('dotenv').config();
 
@@ -963,6 +964,33 @@ app.delete('/api/deleteUser', (req, res) => {
           console.log('No user found with ID:', user_id); // Log if no user was found
           res.status(404).json({ success: false, message: 'User not found' });
       }
+  });
+});
+
+app.get('/api/exportOrders', (req, res) => {
+  // SQL query to fetch completed orders
+  const sql = 'SELECT * FROM `order`'; // You can filter by status if needed
+
+  connection.query(sql, (error, results) => {
+    if (error) {
+      console.error('Error fetching orders:', error);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+
+    // Create a new workbook and add the order data to a worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(results);
+    XLSX.utils.book_append_sheet(wb, ws, 'Order History');
+
+    // Generate the file as a buffer
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+
+    // Set the response headers for Excel file download
+    res.setHeader('Content-Disposition', 'attachment; filename=order_history.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+    // Send the buffer as a response
+    res.end(excelBuffer);
   });
 });
 
