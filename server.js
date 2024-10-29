@@ -346,6 +346,45 @@ app.get('/api/verify-email/:token', (req, res) => {
   });
 });
 
+app.put('/api/menu_items/:item_id', async (req, res) => {
+  const itemId = req.params.item_id;
+  const { item_name, price, category_id } = req.body; // Include category_id
+
+  console.log(`Updating menu item ID: ${itemId} with name: ${item_name}, price: ${price}, category: ${category_id}`); // Debug log
+
+  const validation = validateMenuItem({ item_name, price });
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.message });
+  }
+
+  try {
+    const sql = 'UPDATE menu_items SET item_name = ?, price = ?, category_id = ? WHERE item_id = ?';
+    const result = await queryDatabase(sql, [item_name, price, category_id, itemId]); // Include category_id
+
+    console.log(result); // Check result from query
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json({ message: 'Menu item updated successfully', item_id: itemId });
+  } catch (err) {
+    console.error('Error updating menu item:', err);
+    res.status(500).json({ error: 'Failed to update menu item' });
+  }
+});
+
+// Helper function for database queries
+const queryDatabase = (sql, params) => {
+  return new Promise((resolve, reject) => {
+    connection.query(sql, params, (err, result) => {
+      if (err) {
+        return reject(err);
+      }
+      resolve(result);
+    });
+  });
+};
+
 app.put('/api/menu_items/:item_id/availability', (req, res) => {
   const itemId = req.params.item_id;
   const { is_active } = req.body;
@@ -359,6 +398,36 @@ app.put('/api/menu_items/:item_id/availability', (req, res) => {
       res.json({ message: 'Item availability updated successfully' });
     }
   });
+});
+
+const validateMenuItem = (item) => {
+  if (!item.item_name || typeof item.item_name !== 'string') {
+    return { valid: false, message: 'Item name must be a non-empty string.' };
+  }
+  if (typeof item.price !== 'number' || item.price < 0) {
+    return { valid: false, message: 'Price must be a non-negative number.' };
+  }
+  return { valid: true };
+};
+
+app.delete('/api/menu_items/:item_id', async (req, res) => {
+  const itemId = req.params.item_id;
+  console.log(`Deleting menu item with ID: ${itemId}`); // Debug log
+
+  try {
+    const sql = 'DELETE FROM menu_items WHERE item_id = ?';
+    const result = await queryDatabase(sql, [itemId]);
+    
+    console.log(result); // Check result from query
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.status(204).send(); // No Content
+  } catch (err) {
+    console.error('Error deleting menu item:', err);
+    res.status(500).json({ error: 'Failed to delete menu item' });
+  }
 });
 
 app.post('/api/order_details', (req, res) => {
@@ -689,7 +758,6 @@ app.get('/api/order', (req, res) => {
   });
 });
 
-
 app.get('/api/menu_items', (req, res) => {
   const sql = 'SELECT item_id, item_name, price, image_source, category_id, is_active FROM menu_items';
   connection.query(sql, (err, results) => {
@@ -817,16 +885,20 @@ app.post('/api/updateOrderStatus', (req, res) => {
 
 app.get('/api/categories/:id', (req, res) => {
   const categoryId = req.params.id;
+  console.log(`Fetching category with ID: ${categoryId}`);
+  
   const sql = 'SELECT * FROM categories WHERE category_id = ?';
+  
   connection.query(sql, [categoryId], (err, results) => {
     if (err) {
-      res.status(500).json({ error: 'Failed to fetch category' });
+      console.error('Database error:', err);
+      return res.status(500).json({ error: 'Failed to fetch category' });
+    }
+    
+    if (results.length > 0) {
+      res.json(results[0]);
     } else {
-      if (results.length > 0) {
-        res.json(results[0]);
-      } else {
-        res.status(404).json({ error: 'Category not found' });
-      }
+      res.status(404).json({ error: 'Category not found' });
     }
   });
 });
