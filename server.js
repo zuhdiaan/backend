@@ -1000,19 +1000,27 @@ app.get('/api/exportOrders', (req, res) => {
       return res.status(500).json({ error: 'Internal Server Error' });
     }
 
-    // Format data for Excel (each item in a separate row)
-    const formattedData = results.map(order => ({
-      'Order ID': order.order_id,
-      'Order Date': order.order_time,
-      'User Name': order.user_name || 'Unknown',
-      'Item Name': order.item_name || 'Unknown',
-      'Quantity': order.item_amount || 0,
-      'Item Total Price': `Rp. ${Number(order.item_total_price).toFixed(2)}`,
-      'Total Price': `Rp. ${Number(order.total_price).toFixed(2)}`,
-      'Payment Status': order.payment_status || 'Unknown',
-      'Table Number': order.table_number || 'Unknown',
-      'Payment Method': order.payment_method || 'Unknown',
-    }));
+    // Keep track of the last seen order_id to avoid repetition
+    let previousOrderId = null;
+
+    // Format data for Excel with empty cells for repeated fields
+    const formattedData = results.map((order, index) => {
+      const isFirstRowForOrder = order.order_id !== previousOrderId;
+      previousOrderId = order.order_id;
+
+      return {
+        'Order ID': isFirstRowForOrder ? order.order_id : '',  // Show only in the first row
+        'Order Date': isFirstRowForOrder ? order.order_time : '',
+        'User Name': isFirstRowForOrder ? order.user_name || 'Unknown' : '',
+        'Item Name': order.item_name || 'Unknown',
+        'Quantity': order.item_amount || 0,
+        'Item Total Price': `Rp. ${Number(order.item_total_price).toFixed(2)}`,
+        'Total Price': isFirstRowForOrder ? `Rp. ${Number(order.total_price).toFixed(2)}` : '',
+        'Payment Status': isFirstRowForOrder ? order.payment_status || 'Unknown' : '',
+        'Table Number': isFirstRowForOrder ? order.table_number || 'Unknown' : '',
+        'Payment Method': isFirstRowForOrder ? order.payment_method || 'Unknown' : ''
+      };
+    });
 
     // Create Excel workbook and sheet
     const wb = XLSX.utils.book_new();
