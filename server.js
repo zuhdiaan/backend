@@ -112,13 +112,12 @@ app.post('/api/registerAdmin', async (req, res) => {
   }
 
   try {
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    console.log("Hashed Password:", hashedPassword);
+    // Log the plain password (for debugging purposes; remove in production)
+    console.log("Plain Password:", password);
 
     // Automatically assign 'admin' role for admin-side registration
     const sql = 'INSERT INTO members (name, email, username, password, role) VALUES (?, ?, ?, ?, ?)';
-    connection.query(sql, [name, email, username, hashedPassword, 'admin'], (error, results) => {
+    connection.query(sql, [name, email, username, password, 'admin'], (error, results) => {
       if (error) {
         console.error('Error registering admin:', error);
         return res.status(500).json({ success: false, message: 'Internal Server Error' });
@@ -126,40 +125,43 @@ app.post('/api/registerAdmin', async (req, res) => {
       res.json({ success: true, message: 'Admin registered successfully' });
     });
   } catch (error) {
-    console.error('Error hashing password:', error);
+    console.error('Error processing registration:', error);
     res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 });
 
-
 app.post('/api/loginAdmin', (req, res) => {
   const { username, password } = req.body;
 
-  connection.query('SELECT member_id, password, role FROM members WHERE username = ?', [username], (error, results) => {
-    if (error) {
-      console.error('Database error:', error);
-      return res.status(500).json({ success: false, message: 'Internal Server Error' });
-    }
-
-    if (results.length > 0) {
-      const user = results[0];
-      console.log("Stored Password:", user.password); // Log stored password
-
-      bcrypt.compare(password, user.password, (err, match) => {
-        if (err) {
-          console.error('Bcrypt error:', err);
+  // Update the query to include email_verified in the selected fields
+  connection.query('SELECT member_id, password, role, email_verified FROM members WHERE username = ?', [username], (error, results) => {
+      if (error) {
+          console.error('Database error:', error);
           return res.status(500).json({ success: false, message: 'Internal Server Error' });
-        }
+      }
 
-        if (match) {
-          res.json({ success: true, member_id: user.member_id, role: user.role });
-        } else {
+      if (results.length > 0) {
+          const user = results[0];
+
+          // Check if the user is a member
+          if (user.role === 'member') {
+              return res.json({ success: false, message: 'Akun member tidak dapat login di web.' });
+          }
+
+          // Check if the user's email is verified
+          if (user.role === 'admin' && user.email_verified === 0) {
+              return res.json({ success: false, message: 'Email tidak terverifikasi. Silakan minta owner verifikasi email Anda sebelum login.' });
+          }
+
+          // Verify password
+          if (password === user.password) {
+              res.json({ success: true, member_id: user.member_id, role: user.role });
+          } else {
+              res.json({ success: false, message: 'Username atau password salah.' });
+          }
+      } else {
           res.json({ success: false, message: 'Username atau password salah.' });
-        }
-      });
-    } else {
-      res.json({ success: false, message: 'Username atau password salah.' });
-    }
+      }
   });
 });
 
@@ -912,6 +914,55 @@ app.get('/api/categories', (req, res) => {
     } else {
       res.json(results);
     }
+  });
+});
+
+app.get('/api/users', (req, res) => {
+  // SQL query to select users who are either admin, excluding members and owners
+  const sql = 'SELECT member_id, name, email, username, role, email_verified AS verified FROM members WHERE role != "member" AND role != "owner"';
+  
+  connection.query(sql, (error, results) => {
+      if (error) {
+          console.error('Error fetching users:', error);
+          return res.status(500).json({ error: 'Internal Server Error' });
+      }
+      res.json(results); // Send the filtered user data as a JSON response
+  });
+});
+
+app.post('/api/verifyUser', (req, res) => {
+  const { user_id } = req.body;
+
+  const sql = 'UPDATE members SET email_verified = 1 WHERE member_id = ?';
+  connection.query(sql, [user_id], (error, results) => {
+      if (error) {
+          console.error('Error verifying user:', error);
+          return res.status(500).json({ success: false, message: 'Internal Server Error' });
+      }
+      if (results.affectedRows > 0) {
+          res.json({ success: true, message: 'User verified successfully' });
+      } else {
+          res.status(404).json({ success: false, message: 'User not found' });
+      }
+  });
+});
+
+// API endpoint to delete user
+app.delete('/api/deleteUser', (req, res) => {
+  const { user_id } = req.body; // This should correspond to member_id in your DB
+
+  const sql = 'DELETE FROM members WHERE member_id = ?';
+  connection.query(sql, [user_id], (error, results) => {
+      if (error) {
+          console.error('Error deleting user:', error);
+          return res.status(500).json({ success: false, message: 'Internal Server Error' });
+      }
+      if (results.affectedRows > 0) {
+          res.json({ success: true, message: 'User deleted successfully' });
+      } else {
+          console.log('No user found with ID:', user_id); // Log if no user was found
+          res.status(404).json({ success: false, message: 'User not found' });
+      }
   });
 });
 
