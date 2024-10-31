@@ -47,6 +47,29 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const authenticateUser = (req, res, next) => {
+  const token = req.headers['authorization']?.split(' ')[1];
+  
+  // Decode the token and extract user ID
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log('Decoded user ID:', decoded.id); // Log the user ID
+
+    // Find the user in the database
+    connection.query('SELECT * FROM members WHERE member_id = ?', [decoded.id], (error, results) => {
+      if (error || results.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      req.user = results[0]; // Attach the user to the request object
+      next(); // Proceed to the next middleware
+    });
+  });
+};
+
 app.post('/api/register', (req, res) => {
   const { name, email, username, password } = req.body;
   
@@ -598,6 +621,49 @@ app.post('/api/order', async (req, res) => {
     console.error('Error placing order:', error);
     res.status(500).json({ error: 'Failed to place order' });
   }
+});
+
+app.get('/api/user/order', (req, res) => {
+  const userId = req.query.userId; // Extract userId from query parameters
+
+  let sql = `
+    SELECT
+      o.order_id,
+      CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
+      GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
+      SUM(od.total_price) AS total_price,
+      ps.payment_status,
+      t.table_name AS table_number,
+      p.payment_description AS payment_method
+    FROM
+      \`order\` o
+    LEFT JOIN
+      order_details od ON o.order_id = od.order_id
+    LEFT JOIN
+      menu_items mi ON od.item_id = mi.item_id
+    LEFT JOIN
+      payment_status ps ON o.payment_status_id = ps.payment_status_id
+    LEFT JOIN
+      \`table\` t ON o.table_id = t.table_id
+    LEFT JOIN
+      payment p ON o.payment_id = p.payment_id
+    WHERE
+      o.member_id = ?
+    GROUP BY o.order_id, o.order_date, ps.payment_status, t.table_name, p.payment_description
+  `;
+
+  connection.query(sql, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching user orders from database:', err);
+      return res.status(500).json({ error: 'Failed to fetch orders', details: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'No orders found for this user' });
+    }
+
+    res.json(results);
+  });
 });
 
 app.post('/api/cancelOrder', (req, res) => {
