@@ -624,17 +624,26 @@ app.post('/api/order', async (req, res) => {
 });
 
 app.get('/api/user/order', (req, res) => {
-  const userId = req.query.userId; // Extract userId from query parameters
+  const userId = req.query.userId;
 
   let sql = `
     SELECT
       o.order_id,
       CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
-      GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
+      JSON_ARRAYAGG(
+        JSON_OBJECT(
+          'item_id', od.item_id,
+          'item_name', mi.item_name,
+          'item_amount', od.item_amount,
+          'item_price', od.total_price,
+          'price', mi.price
+        )
+      ) AS items,
       SUM(od.total_price) AS total_price,
       ps.payment_status,
       t.table_name AS table_number,
-      p.payment_description AS payment_method
+      p.payment_description AS payment_method,
+      o.order_status_id
     FROM
       \`order\` o
     LEFT JOIN
@@ -649,7 +658,8 @@ app.get('/api/user/order', (req, res) => {
       payment p ON o.payment_id = p.payment_id
     WHERE
       o.member_id = ?
-    GROUP BY o.order_id, o.order_date, ps.payment_status, t.table_name, p.payment_description
+    GROUP BY
+      o.order_id, o.order_date, ps.payment_status, t.table_name, p.payment_description, o.order_status_id
   `;
 
   connection.query(sql, [userId], (err, results) => {
@@ -662,7 +672,13 @@ app.get('/api/user/order', (req, res) => {
       return res.status(404).json({ error: 'No orders found for this user' });
     }
 
-    res.json(results);
+    const categorizedOrders = {
+      pending: results.filter(order => order.order_status_id === 0),
+      completed: results.filter(order => order.order_status_id === 1),
+      cancelled: results.filter(order => order.order_status_id === 2)
+    };
+
+    res.json(categorizedOrders);
   });
 });
 
@@ -771,7 +787,7 @@ app.get('/api/order', (req, res) => {
     SELECT
       o.order_id,
       CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
-      GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
+ GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
       SUM(od.total_price) AS total_price,
       m.name AS user_name,
       ps.payment_status,
