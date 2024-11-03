@@ -486,7 +486,7 @@ app.post('/api/order_details', (req, res) => {
 });
 
 app.post('/api/place_order', async (req, res) => {
-  const { orderDate, orderedItems, memberId, tableId, paymentId } = req.body;
+  const { orderDate, orderedItems, memberId, tableId, paymentId, paymentStatus } = req.body;
 
   if (!orderedItems || orderedItems.length === 0) {
     return res.status(400).json({ error: 'No items in the order' });
@@ -496,38 +496,25 @@ app.post('/api/place_order', async (req, res) => {
     const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
 
     connection.beginTransaction(async (err) => {
-      if (err) {
-        throw err;
-      }
+      if (err) throw err;
 
       try {
-        // Insert ke tabel order
         const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
         const orderResult = await new Promise((resolve, reject) => {
-          connection.query(orderSql, [0, 0, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
-            if (err) {
-              return reject(err);
-            }
+          connection.query(orderSql, [0, paymentStatus, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
+            if (err) return reject(err);
             resolve(result);
           });
         });
 
         const orderId = orderResult.insertId;
-
-        const orderDetailsValues = orderedItems.map(item => [
-          orderId,
-          item.item_id,
-          item.item_amount,
-          item.total_price
-        ]);
+        const orderDetailsValues = orderedItems.map(item => [orderId, item.item_id, item.item_amount, item.total_price]);
 
         const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
 
         await new Promise((resolve, reject) => {
           connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
-            if (err) {
-              return reject(err);
-            }
+            if (err) return reject(err);
             resolve(result);
           });
         });
