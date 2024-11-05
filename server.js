@@ -17,6 +17,8 @@ const XLSX = require('xlsx');
 
 require('dotenv').config();
 
+const midtransClient = require('midtrans-client');
+
 app.use(bodyParser.json());
 app.use(cors({
   origin: '*', // Untuk testing, buka akses dari semua origin
@@ -29,6 +31,14 @@ const connection = mysql.createConnection({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 });
+
+const snap = new midtransClient.Snap({
+  isProduction: false,
+  serverKey: process.env.MIDTRANS_SERVER_KEY,
+  clientKey: process.env.MIDTRANS_CLIENT_KEY,
+});
+
+// console.log("Snap API initialized:", snap);
 
 connection.connect((err) => {
   if (err) {
@@ -897,45 +907,40 @@ app.get('/api/user/:id', (req, res) => {
   });
 });
 
-app.post('/api/topup', (req, res) => {
-  const { member_id, amount } = req.body;
+app.post('/api/topup', async (req, res) => {
+  const { userId, amount } = req.body;
 
-  if (!member_id || !amount) {
-    return res.status(400).json({ error: 'Member ID and amount are required' });
+  if (!userId || !amount) {
+    return res.status(400).json({ error: 'User ID and amount are required' });
   }
 
-  const sqlSelect = 'SELECT * FROM members WHERE member_id = ?';
-  connection.query(sqlSelect, [member_id], (err, results) => {
-    if (err) {
-      console.error('Error fetching user data:', err);
-      return res.status(500).json({ error: 'Failed to fetch user data' });
-    }
+  try {
+    const transactionDetails = {
+      order_id: `topup-${userId}-${Date.now()}`,
+      gross_amount: amount,
+    };
 
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    const parameter = {
+      transaction_details: transactionDetails,
+      customer_details: {
+        first_name: 'Customer',
+        email: 'customer@example.com',
+        phone: '08123456789',
+      },
+      credit_card: {
+        secure: true,
+      },
+    };
 
-    const user = results[0];
-    const newBalance = parseFloat(user.balance) + parseFloat(amount);
+    const transaction = await snap.createTransaction(parameter);
+    const transactionToken = transaction.token;
 
-    const sqlUpdate = 'UPDATE members SET balance = ? WHERE member_id = ?';
-    connection.query(sqlUpdate, [newBalance, member_id], (updateErr, updateResult) => {
-      if (updateErr) {
-        console.error('Error updating balance:', updateErr);
-        return res.status(500).json({ error: 'Failed to update balance' });
-      }
+    res.json({ success: true, token: transactionToken });
 
-      const sqlInsertTopUp = 'INSERT INTO top_up (topup_amount, member_id) VALUES (?, ?)';
-      connection.query(sqlInsertTopUp, [amount, member_id], (insertErr, insertResult) => {
-        if (insertErr) {
-          console.error('Error inserting top-up record:', insertErr);
-          return res.status(500).json({ error: 'Failed to record top-up' });
-        }
-
-        return res.json({ success: true, message: 'Balance updated successfully', balance: newBalance });
-      });
-    });
-  });
+  } catch (error) {
+    console.error('Error creating Midtrans token:', error);
+    res.status(500).json({ error: 'Failed to create payment token' });
+  }
 });
 
 app.post('/api/updateOrderStatus', (req, res) => {
@@ -1107,5 +1112,5 @@ app.get('/api/exportOrders', (req, res) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Server running at http://0.0.0.0:${port}`);
+  // console.log(`Server running at http://0.0.0.0:${port}`);
 });
