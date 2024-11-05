@@ -943,6 +943,44 @@ app.post('/api/topup', async (req, res) => {
   }
 });
 
+app.post('/api/midtrans-notification', async (req, res) => {
+  const notification = req.body;
+
+  try {
+    const statusResponse = await snap.transaction.notification(notification);
+    console.log('Midtrans Notification:', statusResponse);
+
+    const orderId = statusResponse.order_id;
+    const transactionStatus = statusResponse.transaction_status;
+    const fraudStatus = statusResponse.fraud_status;
+
+    console.log(`Order ID: ${orderId}, Status: ${transactionStatus}, Fraud Status: ${fraudStatus}`);
+
+    if (transactionStatus === 'settlement' && fraudStatus === 'accept') {
+      // Extract userId and amount from orderId
+      const [_, userId, timestamp] = orderId.split('-');
+      const amount = statusResponse.gross_amount;
+
+      // Update user balance in the database
+      const updateBalanceQuery = 'UPDATE members SET balance = balance + ? WHERE member_id = ?';
+      const insertTopUpQuery = 'INSERT INTO top_up (topup_amount, member_id) VALUES (?, ?)';
+
+      await db.query(updateBalanceQuery, [amount, userId]);
+      await db.query(insertTopUpQuery, [amount, userId]);
+
+      console.log(`Balance updated for user ${userId}, amount: ${amount}`);
+
+      res.status(200).send('Transaction successful and database updated');
+    } else {
+      console.log('Transaction not successful or fraud detected');
+      res.status(400).send('Transaction not successful');
+    }
+  } catch (error) {
+    console.error('Error handling Midtrans notification:', error);
+    res.status(500).send('Internal server error');
+  }
+});
+
 app.post('/api/updateOrderStatus', (req, res) => {
   const { orderId, status } = req.body;
   
