@@ -943,6 +943,28 @@ app.post('/api/topup', async (req, res) => {
   }
 });
 
+app.post('/api/insertTopUp', async (req, res) => {
+  const { memberId, topUpAmount } = req.body;
+
+  try {
+    const sql = 'INSERT INTO top_up (member_id, topup_amount) VALUES (?, ?)';
+    await new Promise((resolve, reject) => {
+      connection.query(sql, [memberId, topUpAmount], (err, result) => {
+        if (err) {
+          console.error('Error inserting top-up record:', err);
+          reject(err);
+        } else {
+          res.json({ message: 'Top-up record inserted successfully' });
+          resolve();
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error inserting top-up record:', error);
+    res.status(500).json({ error: 'Failed to insert top-up record' });
+  }
+});
+
 app.post('/api/midtrans-notification', async (req, res) => {
   const notification = req.body;
 
