@@ -916,7 +916,7 @@ app.post('/api/topup', async (req, res) => {
 
   try {
     const transactionDetails = {
-      order_id: `topup-${userId}-${Date.now()}`,
+      order_id: `topup-${userId}-${Date.now()}`, // <-- Corrected here
       gross_amount: amount,
     };
 
@@ -941,6 +941,47 @@ app.post('/api/topup', async (req, res) => {
     console.error('Error creating Midtrans token:', error);
     res.status(500).json({ error: 'Failed to create payment token' });
   }
+});
+
+app.post('/api/topupAdmin', (req, res) => {
+  const { member_id, amount } = req.body;
+
+  if (!member_id || !amount) {
+    return res.status(400).json({ error: 'Member ID and amount are required' });
+  }
+
+  const sqlSelect = 'SELECT * FROM members WHERE member_id = ?';
+  connection.query(sqlSelect, [member_id], (err, results) => {
+    if (err) {
+      console.error('Error fetching user data:', err);
+      return res.status(500).json({ error: 'Failed to fetch user data' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = results[0];
+    const newBalance = parseFloat(user.balance) + parseFloat(amount);
+
+    const sqlUpdate = 'UPDATE members SET balance = ? WHERE member_id = ?';
+    connection.query(sqlUpdate, [newBalance, member_id], (updateErr, updateResult) => {
+      if (updateErr) {
+        console.error('Error updating balance:', updateErr);
+        return res.status(500).json({ error: 'Failed to update balance' });
+      }
+
+      const sqlInsertTopUp = 'INSERT INTO top_up (topup_amount, member_id) VALUES (?, ?)';
+      connection.query(sqlInsertTopUp, [amount, member_id], (insertErr, insertResult) => {
+        if (insertErr) {
+          console.error('Error inserting top-up record:', insertErr);
+          return res.status(500).json({ error: 'Failed to record top-up' });
+        }
+
+        return res.json({ success: true, message: 'Balance updated successfully', balance: newBalance });
+      });
+    });
+  });
 });
 
 app.post('/api/insertTopUp', async (req, res) => {
