@@ -4,7 +4,6 @@ const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const port = 3000;
-// const HOST = '192.168.1.1'; //JARINGAN
 const multer  = require('multer');
 const upload = multer({ dest: 'public/uploads/' });
 const path = require('path');
@@ -504,9 +503,42 @@ app.post('/api/place_order', async (req, res) => {
 
   try {
     const formattedOrderDate = moment(orderDate).format('YYYY-MM-DD HH:mm:ss');
+    const orderAmount = orderedItems.reduce((total, item) => total + item.total_price, 0);
+    const orderId = `order-${memberId}-${Date.now()}`;
 
+    const transactionDetails = {
+      order_id: orderId,
+      gross_amount: orderAmount,
+    };
+
+    const parameter = {
+      transaction_details: transactionDetails,
+      customer_details: {
+        first_name: 'Customer',
+        email: 'customer@example.com',
+        phone: '08123456789',
+      },
+      credit_card: {
+        secure: true,
+      },
+    };
+
+    const transaction = await snap.createTransaction(parameter);
+    console.log('Full Transaction Response:', JSON.stringify(transaction, null, 2));
+    
+    if (!transaction || !transaction.token) {
+      console.error('Transaction token is missing:', transaction);
+      return res.status(500).json({ error: 'Failed to generate transaction token' });
+    }
+    
+    const transactionToken = transaction.token;
+    console.log('Transaction Token:', transactionToken);
+    
     connection.beginTransaction(async (err) => {
-      if (err) throw err;
+      if (err) {
+        console.error('Transaction begin error:', err);
+        return res.status(500).json({ error: 'Failed to initiate database transaction' });
+      }
 
       try {
         const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
@@ -517,9 +549,9 @@ app.post('/api/place_order', async (req, res) => {
           });
         });
 
-        const orderId = orderResult.insertId;
-        const orderDetailsValues = orderedItems.map(item => [orderId, item.item_id, item.item_amount, item.total_price]);
+        const insertedOrderId = orderResult.insertId;
 
+        const orderDetailsValues = orderedItems.map(item => [insertedOrderId, item.item_id, item.item_amount, item.total_price]);
         const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
 
         await new Promise((resolve, reject) => {
@@ -529,13 +561,20 @@ app.post('/api/place_order', async (req, res) => {
           });
         });
 
+        // Commit transaction
         connection.commit((err) => {
           if (err) {
             return connection.rollback(() => {
-              throw err;
+              console.error('Error committing transaction:', err);
+              res.status(500).json({ error: 'Failed to commit transaction' });
             });
           }
-          res.status(200).json({ message: 'Order placed successfully', orderId });
+
+          res.status(200).json({
+            message: 'Order placed successfully',
+            orderId: insertedOrderId,
+            paymentToken: transactionToken,
+          });
         });
       } catch (error) {
         connection.rollback(() => {
@@ -545,8 +584,8 @@ app.post('/api/place_order', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error placing order:', error);
-    res.status(500).json({ error: 'Failed to place order' });
+    console.error('Error processing the order:', error);
+    res.status(500).json({ error: 'Failed to process order' });
   }
 });
 
