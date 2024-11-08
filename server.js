@@ -240,17 +240,23 @@ app.post('/api/updateBalance', async (req, res) => {
 
   try {
     const sql = 'UPDATE members SET balance = ? WHERE member_id = ?';
-    await new Promise((resolve, reject) => {
+
+    const result = await new Promise((resolve, reject) => {
       connection.query(sql, [newBalance, memberId], (err, result) => {
         if (err) {
           console.error('Error updating balance:', err);
-          reject(err);
-        } else {
-          res.json({ message: 'Balance updated successfully' });
-          resolve();
+          return reject(err);
         }
+        resolve(result);
       });
     });
+
+    // Check if the update affected any rows
+    if (result.affectedRows > 0) {
+      res.json({ message: 'Balance updated successfully' });
+    } else {
+      res.status(404).json({ error: 'Member not found or balance unchanged' });
+    }
   } catch (error) {
     console.error('Error updating balance:', error);
     res.status(500).json({ error: 'Failed to update balance' });
