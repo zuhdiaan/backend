@@ -495,9 +495,10 @@ app.post('/api/order_details', (req, res) => {
 });
 
 app.post('/api/place_order', async (req, res) => {
-  const { orderDate, orderedItems, memberId, tableId, paymentId, paymentStatus } = req.body;
+  const { orderDate, orderedItems, memberId, tableId, paymentId, paymentStatus, deferOrder } = req.body;
 
   if (!orderedItems || orderedItems.length === 0) {
+    console.log("Order Error: No items in the order");
     return res.status(400).json({ error: 'No items in the order' });
   }
 
@@ -506,85 +507,66 @@ app.post('/api/place_order', async (req, res) => {
     const orderAmount = orderedItems.reduce((total, item) => total + item.total_price, 0);
     const orderId = `order-${memberId}-${Date.now()}`;
 
-    const transactionDetails = {
-      order_id: orderId,
-      gross_amount: orderAmount,
-    };
+    if (deferOrder) {
+      // Log that we are only generating a token, not inserting yet
+      console.log("Deferring order insertion, generating token only");
+      
+      const transactionDetails = {
+        order_id: orderId,
+        gross_amount: orderAmount,
+      };
 
-    const parameter = {
-      transaction_details: transactionDetails,
-      customer_details: {
-        first_name: 'Customer',
-        email: 'customer@example.com',
-        phone: '08123456789',
-      },
-      credit_card: {
-        secure: true,
-      },
-    };
+      const parameter = {
+        transaction_details: transactionDetails,
+        customer_details: {
+          first_name: 'Customer',
+          email: 'customer@example.com',
+          phone: '08123456789',
+        },
+        credit_card: { secure: true },
+      };
 
-    const transaction = await snap.createTransaction(parameter);
-    console.log('Full Transaction Response:', JSON.stringify(transaction, null, 2));
-    
-    if (!transaction || !transaction.token) {
-      console.error('Transaction token is missing:', transaction);
-      return res.status(500).json({ error: 'Failed to generate transaction token' });
+      const transaction = await snap.createTransaction(parameter);
+      if (!transaction || !transaction.token) {
+        console.log("Error: Failed to generate transaction token");
+        return res.status(500).json({ error: 'Failed to generate transaction token' });
+      }
+
+      return res.status(200).json({
+        paymentToken: transaction.token,
+        message: 'Payment token generated. Order will be inserted upon successful payment.',
+      });
     }
-    
-    const transactionToken = transaction.token;
-    console.log('Transaction Token:', transactionToken);
-    
-    connection.beginTransaction(async (err) => {
-      if (err) {
-        console.error('Transaction begin error:', err);
-        return res.status(500).json({ error: 'Failed to initiate database transaction' });
-      }
 
-      try {
-        const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
-        const orderResult = await new Promise((resolve, reject) => {
-          connection.query(orderSql, [0, paymentStatus, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
-            if (err) return reject(err);
-            resolve(result);
-          });
-        });
+    // Log that we are now inserting the order after payment confirmation
+    console.log("Inserting order after successful payment");
 
-        const insertedOrderId = orderResult.insertId;
+    const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
+    const orderResult = await new Promise((resolve, reject) => {
+      connection.query(orderSql, [0, paymentStatus, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
 
-        const orderDetailsValues = orderedItems.map(item => [insertedOrderId, item.item_id, item.item_amount, item.total_price]);
-        const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
+    const insertedOrderId = orderResult.insertId;
+    const orderDetailsValues = orderedItems.map(item => [insertedOrderId, item.item_id, item.item_amount, item.total_price]);
+    const orderDetailsSql = 'INSERT INTO order_details (order_id, item_id, item_amount, total_price) VALUES ?';
 
-        await new Promise((resolve, reject) => {
-          connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
-            if (err) return reject(err);
-            resolve(result);
-          });
-        });
+    await new Promise((resolve, reject) => {
+      connection.query(orderDetailsSql, [orderDetailsValues], (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
 
-        // Commit transaction
-        connection.commit((err) => {
-          if (err) {
-            return connection.rollback(() => {
-              console.error('Error committing transaction:', err);
-              res.status(500).json({ error: 'Failed to commit transaction' });
-            });
-          }
-
-          res.status(200).json({
-            message: 'Order placed successfully',
-            orderId: insertedOrderId,
-            paymentToken: transactionToken,
-          });
-        });
-      } catch (error) {
-        connection.rollback(() => {
-          console.error('Error placing order:', error);
-          res.status(500).json({ error: 'Failed to place order' });
-        });
-      }
+    console.log("Order successfully inserted with ID:", insertedOrderId);
+    res.status(200).json({
+      message: 'Order placed successfully',
+      orderId: insertedOrderId,
     });
   } catch (error) {
-    console.error('Error processing the order:', error);
+    console.error("Order Insertion Error:", error);
     res.status(500).json({ error: 'Failed to process order' });
   }
 });
