@@ -501,7 +501,7 @@ app.post('/api/order_details', (req, res) => {
 });
 
 app.post('/api/place_order', async (req, res) => {
-  const { orderDate, orderedItems, memberId, tableId, paymentId, paymentStatus, deferOrder } = req.body;
+  const { orderDate, orderedItems, memberId, tableId, paymentMethod, deferOrder } = req.body;
 
   if (!orderedItems || orderedItems.length === 0) {
     console.log("Order Error: No items in the order");
@@ -514,9 +514,8 @@ app.post('/api/place_order', async (req, res) => {
     const orderId = `order-${memberId}-${Date.now()}`;
 
     if (deferOrder) {
-      // Log that we are only generating a token, not inserting yet
       console.log("Deferring order insertion, generating token only");
-      
+
       const transactionDetails = {
         order_id: orderId,
         gross_amount: orderAmount,
@@ -544,12 +543,22 @@ app.post('/api/place_order', async (req, res) => {
       });
     }
 
-    // Log that we are now inserting the order after payment confirmation
     console.log("Inserting order after successful payment");
+
+    // Set payment ID and status based on payment method
+    let finalPaymentId;
+    let finalPaymentStatus;
+    if (paymentMethod === 'cashier') {
+      finalPaymentId = null;
+      finalPaymentStatus = 1; // Unpaid, since it's handled at the cashier
+    } else {
+      finalPaymentId = 2; // Cashless
+      finalPaymentStatus = 0; // Paid
+    }
 
     const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
     const orderResult = await new Promise((resolve, reject) => {
-      connection.query(orderSql, [0, paymentStatus, tableId, formattedOrderDate, paymentId, memberId], (err, result) => {
+      connection.query(orderSql, [0, finalPaymentStatus, tableId, formattedOrderDate, finalPaymentId, memberId], (err, result) => {
         if (err) return reject(err);
         resolve(result);
       });
