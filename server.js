@@ -546,12 +546,9 @@ app.post('/api/place_order', async (req, res) => {
     console.log("Inserting order after successful payment");
 
     // Set payment ID and status based on payment method
-    let finalPaymentId;
-    let finalPaymentStatus;
-    if (paymentMethod === 'cashier') {
-      finalPaymentId = null;
-      finalPaymentStatus = 1; // Unpaid, since it's handled at the cashier
-    } else {
+    let finalPaymentId = null;
+    let finalPaymentStatus = 1; // Default to unpaid
+    if (paymentMethod !== 'cashier') {
       finalPaymentId = 2; // Cashless
       finalPaymentStatus = 0; // Paid
     }
