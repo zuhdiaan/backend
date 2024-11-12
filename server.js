@@ -715,7 +715,7 @@ app.get('/api/user/order', (req, res) => {
 app.post('/api/cancelOrder', (req, res) => {
   const { orderId } = req.body;
 
-  // Langkah 1: Ubah status pesanan menjadi 'canceled'
+  // Step 1: Update the order status to 'canceled'
   const updateOrderStatusSql = "UPDATE `order` SET order_status_id = 2 WHERE order_id = ?";
 
   connection.beginTransaction((err) => {
@@ -732,13 +732,13 @@ app.post('/api/cancelOrder', (req, res) => {
         });
       }
 
-      // Langkah 2: Ambil total harga order dan member_id dari order_details dan order
+      // Step 2: Fetch total price, member_id, and payment_id from order_details and order
       const getOrderDetailsSql = `
-        SELECT SUM(od.total_price) AS total_refund, o.member_id 
+        SELECT SUM(od.total_price) AS total_refund, o.member_id, o.payment_id 
         FROM order_details od 
         JOIN \`order\` o ON od.order_id = o.order_id 
         WHERE od.order_id = ?
-        GROUP BY o.member_id`;
+        GROUP BY o.member_id, o.payment_id`;
 
       connection.query(getOrderDetailsSql, [orderId], (err, orderDetails) => {
         if (err) {
@@ -756,23 +756,12 @@ app.post('/api/cancelOrder', (req, res) => {
 
         const totalRefund = orderDetails[0].total_refund;
         const memberId = orderDetails[0].member_id;
+        const paymentId = orderDetails[0].payment_id;
 
-        // Langkah 3: Update saldo anggota
-        const updateMemberBalanceSql = `
-          UPDATE members 
-          SET balance = balance + ? 
-          WHERE member_id = ?`;
-
-        connection.query(updateMemberBalanceSql, [totalRefund, memberId], (err, results) => {
-          if (err) {
-            console.error('Error updating member balance:', err);
-            return connection.rollback(() => {
-              res.status(500).json({ error: 'Failed to update member balance' });
-            });
-          }
-
-          // Langkah 4: Commit transaction
-          connection.commit((err) => {
+        // Step 3: Check if the payment method is "Pay at the Cashier" (represented by null)
+        if (paymentId === null) {
+          // Do not process refund for "Pay at the Cashier"
+          return connection.commit((err) => {
             if (err) {
               console.error('Error committing transaction:', err);
               return connection.rollback(() => {
@@ -780,9 +769,36 @@ app.post('/api/cancelOrder', (req, res) => {
               });
             }
 
-            res.json({ message: 'Order canceled and refunded successfully' });
+            res.json({ message: 'Order canceled without refund' });
           });
-        });
+        } else {
+          // Step 4: Update member balance for other payment methods
+          const updateMemberBalanceSql = `
+            UPDATE members 
+            SET balance = balance + ? 
+            WHERE member_id = ?`;
+
+          connection.query(updateMemberBalanceSql, [totalRefund, memberId], (err, results) => {
+            if (err) {
+              console.error('Error updating member balance:', err);
+              return connection.rollback(() => {
+                res.status(500).json({ error: 'Failed to update member balance' });
+              });
+            }
+
+            // Step 5: Commit transaction
+            connection.commit((err) => {
+              if (err) {
+                console.error('Error committing transaction:', err);
+                return connection.rollback(() => {
+                  res.status(500).json({ error: 'Failed to commit transaction' });
+                });
+              }
+
+              res.json({ message: 'Order canceled and refunded successfully' });
+            });
+          });
+        }
       });
     });
   });
