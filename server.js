@@ -1069,6 +1069,30 @@ app.post('/api/insertTopUp', async (req, res) => {
   }
 });
 
+app.get('/api/getTopUpData', (req, res) => {
+  const { member_id } = req.query; // Get member_id from query params to filter by user
+  console.log("Received request for member_id:", member_id);
+  if (!member_id) {
+    return res.status(400).json({ error: 'Member ID is required' });
+  }
+
+  // Query to fetch top-up history for the given member_id
+  const sqlSelect = 'SELECT * FROM top_up WHERE member_id = ? ORDER BY topup_id DESC';
+  connection.query(sqlSelect, [member_id], (err, results) => {
+    if (err) {
+      console.error('Error fetching top-up data:', err);
+      return res.status(500).json({ error: 'Failed to fetch top-up data' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'No top-up data found' });
+    }
+
+    // Return top-up data to the client
+    res.json({ success: true, topUpData: results });
+  });
+});
+
 app.post('/api/midtrans-notification', async (req, res) => {
   const notification = req.body;
 
