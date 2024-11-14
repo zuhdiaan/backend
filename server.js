@@ -906,25 +906,39 @@ app.post('/api/menu_items', upload.single('avatar'), async (req, res) => {
     const { item_name, price, category_id } = req.body;
     const uploadedFile = req.file;
 
-    const sanitizedFilename = item_name.toLowerCase().replace(/\s+/g, '-');
-    const originalExtension = path.extname(uploadedFile.originalname);
-
-    const targetDirectory = path.join(__dirname, 'public', 'uploads');
-    await fs.mkdir(targetDirectory, { recursive: true });
-
-    const targetPath = path.join(targetDirectory, sanitizedFilename + originalExtension);
-    await fs.rename(uploadedFile.path, targetPath);
-
-    console.log('File moved successfully');
-
-    const sql = 'INSERT INTO menu_items (item_name, price, image_source, category_id) VALUES (?, ?, ?, ?)';
-    connection.query(sql, [item_name, price, sanitizedFilename + originalExtension, category_id], (err, result) => {
+    // Check if item_name already exists in the database
+    const checkSql = 'SELECT COUNT(*) AS count FROM menu_items WHERE item_name = ?';
+    connection.query(checkSql, [item_name], async (err, results) => {
       if (err) {
-        console.error('Error inserting into database:', err);
-        res.status(500).json({ error: 'Failed to add menu item' });
-      } else {
-        res.json({ id: result.insertId });
+        console.error('Error checking for duplicates:', err);
+        return res.status(500).json({ error: 'Database error' });
       }
+
+      if (results[0].count > 0) {
+        return res.status(400).json({ error: 'Menu item with the same name already exists' });
+      }
+
+      // Proceed if no duplicates
+      const sanitizedFilename = item_name.toLowerCase().replace(/\s+/g, '-');
+      const originalExtension = path.extname(uploadedFile.originalname);
+
+      const targetDirectory = path.join(__dirname, 'public', 'uploads');
+      await fs.mkdir(targetDirectory, { recursive: true });
+
+      const targetPath = path.join(targetDirectory, sanitizedFilename + originalExtension);
+      await fs.rename(uploadedFile.path, targetPath);
+
+      console.log('File moved successfully');
+
+      const sql = 'INSERT INTO menu_items (item_name, price, image_source, category_id) VALUES (?, ?, ?, ?)';
+      connection.query(sql, [item_name, price, sanitizedFilename + originalExtension, category_id], (err, result) => {
+        if (err) {
+          console.error('Error inserting into database:', err);
+          res.status(500).json({ error: 'Failed to add menu item' });
+        } else {
+          res.json({ id: result.insertId });
+        }
+      });
     });
   } catch (err) {
     console.error('Error handling request:', err);
