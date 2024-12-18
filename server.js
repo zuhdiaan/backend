@@ -150,7 +150,7 @@ app.post('/api/registerAdmin', async (req, res) => {
 
     // Automatically assign 'admin' role for admin-side registration
     const sql = 'INSERT INTO members (name, email, username, password, role) VALUES (?, ?, ?, ?, ?)';
-    connection.query(sql, [name, email, username, password, 'admin'], (error, results) => {
+    connection.query(sql, [name, email, username, password, 'barista'], (error, results) => {
       if (error) {
         console.error('Error registering admin:', error);
         return res.status(500).json({ success: false, message: 'Internal Server Error' });
@@ -198,21 +198,40 @@ app.post('/api/loginAdmin', (req, res) => {
   });
 });
 
-// User login endpoint
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  const sql = 'SELECT * FROM members WHERE username = ? AND password = ?';
-  connection.query(sql, [username, password], (err, results) => {
+
+  // Query to check user credentials
+  const sql = 'SELECT * FROM members WHERE username = ? AND role = ?';
+  connection.query(sql, [username, 'member'], (err, results) => {
     if (err) {
       console.error('Error logging in:', err);
-      res.status(500).json({ error: 'Failed to login' });
-    } else {
-      if (results.length > 0) {
-        const user = results[0];
-        res.json({ success: true, message: 'Login successful', userId: user.member_id, name: user.name, balance: user.balance });
-      } else {
-        res.status(401).json({ success: false, message: 'Invalid username or password' });
+      return res.status(500).json({ error: 'Failed to login' });
+    }
+
+    if (results.length > 0) {
+      const user = results[0];
+
+      // Check if password matches
+      if (user.password !== password) {
+        return res.status(401).json({ success: false, message: 'Invalid username or password' });
       }
+
+      // Check if account is verified
+      if (user.email_verified === 0) {
+        return res.status(403).json({ success: false, message: 'Please verify your account' });
+      }
+
+      // Successful login
+      return res.json({ 
+        success: true, 
+        message: 'Login successful', 
+        userId: user.member_id, 
+        name: user.name, 
+        balance: user.balance 
+      });
+    } else {
+      return res.status(401).json({ success: false, message: 'Invalid username or password' });
     }
   });
 });
@@ -890,7 +909,7 @@ app.get('/api/order', (req, res) => {
 });
 
 app.get('/api/menu_items', (req, res) => {
-  const sql = 'SELECT item_id, item_name, price, image_source, category_id, is_active FROM menu_items';
+  const sql = 'SELECT item_id, item_name, price, image_source, category, is_active FROM menu_items';
   connection.query(sql, (err, results) => {
     if (err) {
       console.error('Error fetching menu items:', err);
@@ -903,7 +922,7 @@ app.get('/api/menu_items', (req, res) => {
 
 app.post('/api/menu_items', upload.single('avatar'), async (req, res) => {
   try {
-    const { item_name, price, category_id } = req.body;
+    const { item_name, price, category } = req.body; // `category` is now an ENUM value, not a category_id
     const uploadedFile = req.file;
 
     // Check if item_name already exists in the database
@@ -930,8 +949,9 @@ app.post('/api/menu_items', upload.single('avatar'), async (req, res) => {
 
       console.log('File moved successfully');
 
-      const sql = 'INSERT INTO menu_items (item_name, price, image_source, category_id) VALUES (?, ?, ?, ?)';
-      connection.query(sql, [item_name, price, sanitizedFilename + originalExtension, category_id], (err, result) => {
+      // Insert menu item with category as an ENUM value
+      const sql = 'INSERT INTO menu_items (item_name, price, image_source, category) VALUES (?, ?, ?, ?)';
+      connection.query(sql, [item_name, price, sanitizedFilename + originalExtension, category], (err, result) => {
         if (err) {
           console.error('Error inserting into database:', err);
           res.status(500).json({ error: 'Failed to add menu item' });
@@ -1144,38 +1164,6 @@ app.post('/api/updateOrderStatus', (req, res) => {
       res.status(500).json({ error: 'Failed to update order status' });
     } else {
       res.json({ message: 'Order status updated successfully' });
-    }
-  });
-});
-
-app.get('/api/categories/:id', (req, res) => {
-  const categoryId = req.params.id;
-  console.log(`Fetching category with ID: ${categoryId}`);
-  
-  const sql = 'SELECT * FROM categories WHERE category_id = ?';
-  
-  connection.query(sql, [categoryId], (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ error: 'Failed to fetch category' });
-    }
-    
-    if (results.length > 0) {
-      res.json(results[0]);
-    } else {
-      res.status(404).json({ error: 'Category not found' });
-    }
-  });
-});
-
-app.get('/api/categories', (req, res) => {
-  const sql = 'SELECT * FROM categories';
-  connection.query(sql, (err, results) => {
-    if (err) {
-      console.error('Error fetching categories from database:', err);
-      res.status(500).json({ error: 'Failed to fetch categories' });
-    } else {
-      res.json(results);
     }
   });
 });
