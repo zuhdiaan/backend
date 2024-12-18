@@ -406,32 +406,53 @@ app.get('/api/verify-email/:token', (req, res) => {
   });
 });
 
-app.put('/api/menu_items/:item_id', async (req, res) => {
-  const itemId = req.params.item_id;
-  const { item_name, price, category } = req.body; // Use the 'category' column
-
-  console.log(`Updating menu item ID: ${itemId} with name: ${item_name}, price: ${price}, category: ${category}`); // Debug log
-
-  // Validate the menu item data
-  const validation = validateMenuItem({ item_name, price, category });
-  if (!validation.valid) {
-    return res.status(400).json({ error: validation.message });
-  }
-
+app.put('/api/menu_items/:item_id', upload.single('avatar'), async (req, res) => {
   try {
-    // Update the SQL query to use 'category' instead of 'category_id'
-    const sql = 'UPDATE menu_items SET item_name = ?, price = ?, category = ? WHERE item_id = ?';
-    const result = await queryDatabase(sql, [item_name, price, category, itemId]); // Pass 'category'
+    const itemId = req.params.item_id;
+    const { item_name, price, category } = req.body;
+    const uploadedFile = req.file;
 
-    console.log(result); // Check result from query
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
+    // Check if item exists in the database
+    const checkSql = 'SELECT * FROM menu_items WHERE item_id = ?';
+    connection.query(checkSql, [itemId], async (err, results) => {
+      if (err) {
+        console.error('Error fetching item:', err);
+        return res.status(500).json({ error: 'Database error' });
+      }
 
-    res.json({ message: 'Menu item updated successfully', item_id: itemId });
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'Menu item not found' });
+      }
+
+      let imageSource = results[0].image_source; // Keep the existing image unless a new one is uploaded
+
+      if (uploadedFile) {
+        const sanitizedFilename = item_name.toLowerCase().replace(/\s+/g, '-');
+        const originalExtension = path.extname(uploadedFile.originalname);
+        const targetDirectory = path.join(__dirname, 'public', 'uploads');
+        await fs.mkdir(targetDirectory, { recursive: true });
+
+        const targetPath = path.join(targetDirectory, sanitizedFilename + originalExtension);
+        await fs.rename(uploadedFile.path, targetPath);
+
+        // Update image path if a new file was uploaded
+        imageSource = sanitizedFilename + originalExtension;
+      }
+
+      // Update the menu item in the database
+      const sql = 'UPDATE menu_items SET item_name = ?, price = ?, image_source = ?, category = ? WHERE item_id = ?';
+      connection.query(sql, [item_name, price, imageSource, category, itemId], (err, result) => {
+        if (err) {
+          console.error('Error updating menu item:', err);
+          return res.status(500).json({ error: 'Failed to update menu item' });
+        }
+
+        res.json({ message: 'Menu item updated successfully' });
+      });
+    });
   } catch (err) {
-    console.error('Error updating menu item:', err);
-    res.status(500).json({ error: 'Failed to update menu item' });
+    console.error('Error handling request:', err);
+    res.status(500).json({ error: 'Failed to process the request' });
   }
 });
 
