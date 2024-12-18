@@ -408,18 +408,20 @@ app.get('/api/verify-email/:token', (req, res) => {
 
 app.put('/api/menu_items/:item_id', async (req, res) => {
   const itemId = req.params.item_id;
-  const { item_name, price, category_id } = req.body; // Include category_id
+  const { item_name, price, category } = req.body; // Use the 'category' column
 
-  console.log(`Updating menu item ID: ${itemId} with name: ${item_name}, price: ${price}, category: ${category_id}`); // Debug log
+  console.log(`Updating menu item ID: ${itemId} with name: ${item_name}, price: ${price}, category: ${category}`); // Debug log
 
-  const validation = validateMenuItem({ item_name, price });
+  // Validate the menu item data
+  const validation = validateMenuItem({ item_name, price, category });
   if (!validation.valid) {
     return res.status(400).json({ error: validation.message });
   }
 
   try {
-    const sql = 'UPDATE menu_items SET item_name = ?, price = ?, category_id = ? WHERE item_id = ?';
-    const result = await queryDatabase(sql, [item_name, price, category_id, itemId]); // Include category_id
+    // Update the SQL query to use 'category' instead of 'category_id'
+    const sql = 'UPDATE menu_items SET item_name = ?, price = ?, category = ? WHERE item_id = ?';
+    const result = await queryDatabase(sql, [item_name, price, category, itemId]); // Pass 'category'
 
     console.log(result); // Check result from query
     if (result.affectedRows === 0) {
