@@ -236,7 +236,6 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// Fetch balance endpoint
 app.get('/api/balance', (req, res) => {
   const userId = req.query.userId;
   const sql = 'SELECT balance FROM members WHERE member_id = ?';
@@ -587,17 +586,12 @@ app.post('/api/place_order', async (req, res) => {
 
     console.log("Inserting order after successful payment");
 
-    // Set payment ID and status based on payment method
-    let finalPaymentId = null;
-    let finalPaymentStatus = 1; // Default to unpaid
-    if (paymentMethod !== 'cashier') {
-      finalPaymentId = 2; // Cashless
-      finalPaymentStatus = 0; // Paid
-    }
+    // Set payment status based on payment method
+    const finalPaymentStatus = paymentMethod === 'Cash' ? 'Not Paid' : 'Paid';
 
-    const orderSql = 'INSERT INTO `order` (order_status_id, payment_status_id, table_id, order_date, payment_id, member_id) VALUES (?, ?, ?, ?, ?, ?)';
+    const orderSql = 'INSERT INTO `order` (order_status, payment_status, table_id, order_date, payment, member_id) VALUES (?, ?, ?, ?, ?, ?)';
     const orderResult = await new Promise((resolve, reject) => {
-      connection.query(orderSql, [0, finalPaymentStatus, tableId, formattedOrderDate, finalPaymentId, memberId], (err, result) => {
+      connection.query(orderSql, ['Pending', finalPaymentStatus, tableId, formattedOrderDate, paymentMethod, memberId], (err, result) => {
         if (err) return reject(err);
         resolve(result);
       });
@@ -875,12 +869,12 @@ app.get('/api/order', (req, res) => {
     SELECT
       o.order_id,
       CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time,
- GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
+      GROUP_CONCAT(CONCAT(od.item_id, ':', mi.item_name, ':', od.item_amount, ':', od.total_price)) AS items,
       SUM(od.total_price) AS total_price,
       m.name AS user_name,
-      ps.payment_status,
+      o.payment_status AS payment_status,
       t.table_name AS table_number,
-      p.payment_description AS payment_method
+      o.payment AS payment_method
     FROM
       \`order\` o
     LEFT JOIN
@@ -890,11 +884,7 @@ app.get('/api/order', (req, res) => {
     LEFT JOIN
       members m ON o.member_id = m.member_id
     LEFT JOIN
-      payment_status ps ON o.payment_status_id = ps.payment_status_id
-    LEFT JOIN
       \`table\` t ON o.table_id = t.table_id
-    LEFT JOIN
-      payment p ON o.payment_id = p.payment_id
   `;
 
   // Handle fetching specific order by orderId or by status
@@ -902,13 +892,12 @@ app.get('/api/order', (req, res) => {
     sql += `WHERE o.order_id = ? `;
   } else if (status) {
     sql += `
-      WHERE o.order_status_id = (
-        SELECT order_status_id FROM order_status WHERE order_status = ?
-      ) `;
+      WHERE o.order_status = ?
+    `;
   }
 
   sql += `
-    GROUP BY o.order_id, o.order_date, m.name, ps.payment_status, t.table_name, p.payment_description
+    GROUP BY o.order_id, o.order_date, m.name, o.payment_status, t.table_name, o.payment
   `;
 
   const params = orderId ? [orderId] : status ? [status] : [];
