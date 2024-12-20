@@ -586,12 +586,34 @@ app.post('/api/place_order', async (req, res) => {
 
     console.log("Inserting order after successful payment");
 
-    // Set payment status based on payment method
-    const finalPaymentStatus = paymentMethod === 'Cash' ? 'Not Paid' : 'Paid';
+    // Set payment status and payment method based on the payment method
+    let finalPaymentStatus;
+    let paymentMethodValue;
+
+    if (paymentMethod === 'Pay at the cashier') {
+      finalPaymentStatus = 'Not Paid';
+      paymentMethodValue = null;
+    } else if (paymentMethod === 'Use Balance') {
+      finalPaymentStatus = 'Paid';
+      paymentMethodValue = 'Cashless';
+
+      const updateBalanceSql = 'UPDATE members SET balance = balance - ? WHERE member_id = ?';
+      await new Promise((resolve, reject) => {
+        connection.query(updateBalanceSql, [orderAmount, memberId], (err, result) => {
+          if (err) return reject(err);
+          resolve(result);
+        });
+      });
+    } else if (paymentMethod === 'Cashless') {
+      finalPaymentStatus = 'Paid';
+      paymentMethodValue = 'Cashless';
+    } else {
+      return res.status(400).json({ error: 'Invalid payment method' });
+    }
 
     const orderSql = 'INSERT INTO `order` (order_status, payment_status, table_id, order_date, payment, member_id) VALUES (?, ?, ?, ?, ?, ?)';
     const orderResult = await new Promise((resolve, reject) => {
-      connection.query(orderSql, ['Pending', finalPaymentStatus, tableId, formattedOrderDate, paymentMethod, memberId], (err, result) => {
+      connection.query(orderSql, ['Pending', finalPaymentStatus, tableId, formattedOrderDate, paymentMethodValue, memberId], (err, result) => {
         if (err) return reject(err);
         resolve(result);
       });
@@ -1165,18 +1187,126 @@ app.post('/api/midtrans-notification', async (req, res) => {
 
 app.post('/api/updateOrderStatus', (req, res) => {
   const { orderId, status } = req.body;
-  
+
   // Convert status to order_status_id
   let status_id = status === 'completed' ? 1 : 0;
 
-  const sql = "UPDATE `order` SET order_status_id = ? WHERE order_id = ?";
-  connection.query(sql, [status_id, orderId], (err, results) => {
+  // Start a transaction
+  connection.beginTransaction(err => {
     if (err) {
-      console.error('Error updating order status:', err);
-      res.status(500).json({ error: 'Failed to update order status' });
-    } else {
-      res.json({ message: 'Order status updated successfully' });
+      console.error('Error starting transaction:', err);
+      return res.status(500).json({ error: 'Failed to start transaction' });
     }
+
+    // Update the order status
+    const updateOrderStatusSql = "UPDATE `order` SET order_status_id = ? WHERE order_id = ?";
+    connection.query(updateOrderStatusSql, [status_id, orderId], (err, results) => {
+      if (err) {
+        console.error('Error updating order status:', err);
+        return connection.rollback(() => {
+          res.status(500).json({ error: 'Failed to update order status' });
+        });
+      }
+
+      if (status === 'completed') {
+        // Fetch the order details
+        const fetchOrderSql = "SELECT * FROM `order` WHERE order_id = ?";
+        const fetchOrderDetailsSql = "SELECT * FROM `order_details` WHERE order_id = ?";
+
+        connection.query(fetchOrderSql, [orderId], (err, orderResults) => {
+          if (err) {
+            console.error('Error fetching order:', err);
+            return connection.rollback(() => {
+              res.status(500).json({ error: 'Failed to fetch order' });
+            });
+          }
+
+          const order = orderResults[0];
+          connection.query(fetchOrderDetailsSql, [orderId], (err, orderDetailsResults) => {
+            if (err) {
+              console.error('Error fetching order details:', err);
+              return connection.rollback(() => {
+                res.status(500).json({ error: 'Failed to fetch order details' });
+              });
+            }
+
+            // Insert into order_history
+            const insertOrderHistorySql = "INSERT INTO `order_history` (order_date, table_id, member_id, total_price, payment_status_id, payment_id) VALUES (?, ?, ?, ?, ?, ?)";
+            connection.query(insertOrderHistorySql, [
+              order.order_date,
+              order.table_id,
+              order.member_id,
+              order.total_price,
+              order.payment_status_id,
+              order.payment_id
+            ], (err, result) => {
+              if (err) {
+                console.error('Error inserting into order_history:', err);
+                return connection.rollback(() => {
+                  res.status(500).json({ error: 'Failed to insert into order history' });
+                });
+              }
+
+              const orderHistoryId = result.insertId;
+
+              // Insert into order_history_details
+              const insertOrderHistoryDetailsSql = "INSERT INTO `order_history_details` (order_history_id, item_name, item_amount, item_price) VALUES ?";
+              const orderHistoryDetailsValues = orderDetailsResults.map(detail => [
+                orderHistoryId,
+                detail.item_name,
+                detail.item_amount,
+                detail.item_price
+              ]);
+
+              connection.query(insertOrderHistoryDetailsSql, [orderHistoryDetailsValues], (err) => {
+                if (err) {
+                  console.error('Error inserting into order_history_details:', err);
+                  return connection.rollback(() => {
+                    res.status(500).json({ error: 'Failed to insert into order history details' });
+                  });
+                }
+
+                // Delete from order and order_details
+                const deleteOrderSql = "DELETE FROM `order` WHERE order_id = ?";
+                const deleteOrderDetailsSql = "DELETE FROM `order_details` WHERE order_id = ?";
+
+                connection.query(deleteOrderSql, [orderId], (err) => {
+                  if (err) {
+                    console.error('Error deleting order:', err);
+                    return connection.rollback(() => {
+                      res.status(500).json({ error: 'Failed to delete order' });
+                    });
+                  }
+
+                  connection.query(deleteOrderDetailsSql, [orderId], (err) => {
+                    if (err) {
+                      console.error('Error deleting order details:', err);
+                      return connection.rollback(() => {
+                        res.status(500).json({ error: 'Failed to delete order details' });
+                      });
+                    }
+
+                    // Commit the transaction
+                    connection.commit(err => {
+                      if (err) {
+                        console.error('Error committing transaction:', err);
+                        return connection.rollback(() => {
+                          res.status(500).json({ error: 'Failed to commit transaction' });
+                        });
+                      }
+
+                      res.json({ message: 'Order status updated and moved to history successfully' });
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      } else {
+        res.json({ message: 'Order status updated successfully' });
+      }
+    });
   });
 });
 
