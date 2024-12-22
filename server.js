@@ -773,8 +773,8 @@ app.get('/api/user/order', (req, res) => {
 app.post('/api/cancelOrder', (req, res) => {
   const { orderId } = req.body;
 
-  // Step 1: Update the order status to 'canceled'
-  const updateOrderStatusSql = "UPDATE `order` SET order_status_id = 2 WHERE order_id = ?";
+  // Step 1: Update the order status to 'Cancelled'
+  const updateOrderStatusSql = "UPDATE `order` SET order_status = 'Cancelled' WHERE order_id = ?";
 
   connection.beginTransaction((err) => {
     if (err) {
@@ -790,13 +790,13 @@ app.post('/api/cancelOrder', (req, res) => {
         });
       }
 
-      // Step 2: Fetch total price, member_id, and payment_id from order_details and order
+      // Step 2: Fetch total price, member_id, and payment method from order_details and order
       const getOrderDetailsSql = `
-        SELECT SUM(od.total_price) AS total_refund, o.member_id, o.payment_id 
+        SELECT SUM(od.total_price) AS total_refund, o.member_id, o.payment 
         FROM order_details od 
         JOIN \`order\` o ON od.order_id = o.order_id 
         WHERE od.order_id = ?
-        GROUP BY o.member_id, o.payment_id`;
+        GROUP BY o.member_id, o.payment`;
 
       connection.query(getOrderDetailsSql, [orderId], (err, orderDetails) => {
         if (err) {
@@ -814,11 +814,11 @@ app.post('/api/cancelOrder', (req, res) => {
 
         const totalRefund = orderDetails[0].total_refund;
         const memberId = orderDetails[0].member_id;
-        const paymentId = orderDetails[0].payment_id;
+        const paymentMethod = orderDetails[0].payment;
 
-        // Step 3: Check if the payment method is "Pay at the Cashier" (represented by null)
-        if (paymentId === null) {
-          // Do not process refund for "Pay at the Cashier"
+        // Step 3: Check if the payment method is "Cash"
+        if (paymentMethod === 'Cash') {
+          // Do not process refund for "Cash"
           return connection.commit((err) => {
             if (err) {
               console.error('Error committing transaction:', err);
@@ -913,9 +913,7 @@ app.get('/api/order', (req, res) => {
   if (orderId) {
     sql += `WHERE o.order_id = ? `;
   } else if (status) {
-    sql += `
-      WHERE o.order_status = ?
-    `;
+    sql += `WHERE o.order_status = ? `;
   }
 
   sql += `
@@ -933,12 +931,25 @@ app.get('/api/order', (req, res) => {
         res.status(404).json({ error: 'Order not found' });
       } else if (orderId) {
         // Return a single order for orderId queries
-        res.json(results[0]); 
+        res.json(results[0]);
       } else {
         // Return all orders for status queries
         res.json(results);
       }
     }
+  });
+});
+
+app.get('/api/order_history', (req, res) => {
+  const fetchCompletedOrdersSql = "SELECT * FROM `order_history`";
+
+  connection.query(fetchCompletedOrdersSql, (err, results) => {
+    if (err) {
+      console.error('Error fetching completed orders:', err);
+      return res.status(500).json({ error: 'Failed to fetch completed orders' });
+    }
+
+    res.json(results);
   });
 });
 
@@ -1188,10 +1199,6 @@ app.post('/api/midtrans-notification', async (req, res) => {
 app.post('/api/updateOrderStatus', (req, res) => {
   const { orderId, status } = req.body;
 
-  // Convert status to order_status_id
-  let status_id = status === 'completed' ? 1 : 0;
-
-  // Start a transaction
   connection.beginTransaction(err => {
     if (err) {
       console.error('Error starting transaction:', err);
@@ -1199,8 +1206,8 @@ app.post('/api/updateOrderStatus', (req, res) => {
     }
 
     // Update the order status
-    const updateOrderStatusSql = "UPDATE `order` SET order_status_id = ? WHERE order_id = ?";
-    connection.query(updateOrderStatusSql, [status_id, orderId], (err, results) => {
+    const updateOrderStatusSql = "UPDATE `order` SET order_status = ? WHERE order_id = ?";
+    connection.query(updateOrderStatusSql, [status, orderId], (err, results) => {
       if (err) {
         console.error('Error updating order status:', err);
         return connection.rollback(() => {
@@ -1208,7 +1215,7 @@ app.post('/api/updateOrderStatus', (req, res) => {
         });
       }
 
-      if (status === 'completed') {
+      if (status === 'Completed') {
         // Fetch the order details
         const fetchOrderSql = "SELECT * FROM `order` WHERE order_id = ?";
         const fetchOrderDetailsSql = "SELECT * FROM `order_details` WHERE order_id = ?";
@@ -1231,14 +1238,15 @@ app.post('/api/updateOrderStatus', (req, res) => {
             }
 
             // Insert into order_history
-            const insertOrderHistorySql = "INSERT INTO `order_history` (order_date, table_id, member_id, total_price, payment_status_id, payment_id) VALUES (?, ?, ?, ?, ?, ?)";
+            const insertOrderHistorySql = "INSERT INTO `order_history` (order_date, table_id, member_id, total_price, payment_status, payment, order_status) VALUES (?, ?, ?, ?, ?, ?, ?)";
             connection.query(insertOrderHistorySql, [
               order.order_date,
               order.table_id,
               order.member_id,
               order.total_price,
-              order.payment_status_id,
-              order.payment_id
+              order.payment_status,
+              order.payment,
+              status
             ], (err, result) => {
               if (err) {
                 console.error('Error inserting into order_history:', err);
@@ -1255,7 +1263,7 @@ app.post('/api/updateOrderStatus', (req, res) => {
                 orderHistoryId,
                 detail.item_name,
                 detail.item_amount,
-                detail.item_price
+                detail.total_price
               ]);
 
               connection.query(insertOrderHistoryDetailsSql, [orderHistoryDetailsValues], (err) => {
@@ -1304,7 +1312,16 @@ app.post('/api/updateOrderStatus', (req, res) => {
           });
         });
       } else {
-        res.json({ message: 'Order status updated successfully' });
+        connection.commit(err => {
+          if (err) {
+            console.error('Error committing transaction:', err);
+            return connection.rollback(() => {
+              res.status(500).json({ error: 'Failed to commit transaction' });
+            });
+          }
+
+          res.json({ message: 'Order status updated successfully' });
+        });
       }
     });
   });
