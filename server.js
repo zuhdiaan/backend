@@ -728,10 +728,10 @@ app.get('/api/user/order', (req, res) => {
         )
       ) AS items,
       SUM(od.total_price) AS total_price,
-      ps.payment_status,
+      o.payment_status,
       t.table_name AS table_number,
-      p.payment_description AS payment_method,
-      o.order_status_id
+      o.payment AS payment_method,
+      o.order_status
     FROM
       \`order\` o
     LEFT JOIN
@@ -739,15 +739,11 @@ app.get('/api/user/order', (req, res) => {
     LEFT JOIN
       menu_items mi ON od.item_id = mi.item_id
     LEFT JOIN
-      payment_status ps ON o.payment_status_id = ps.payment_status_id
-    LEFT JOIN
       \`table\` t ON o.table_id = t.table_id
-    LEFT JOIN
-      payment p ON o.payment_id = p.payment_id
     WHERE
       o.member_id = ?
     GROUP BY
-      o.order_id, o.order_date, ps.payment_status, t.table_name, p.payment_description, o.order_status_id
+      o.order_id, o.order_date, o.payment_status, t.table_name, o.payment, o.order_status
   `;
 
   connection.query(sql, [userId], (err, results) => {
@@ -761,9 +757,9 @@ app.get('/api/user/order', (req, res) => {
     }
 
     const categorizedOrders = {
-      pending: results.filter(order => order.order_status_id === 0),
-      completed: results.filter(order => order.order_status_id === 1),
-      cancelled: results.filter(order => order.order_status_id === 2)
+      pending: results.filter(order => order.order_status === 'Pending'),
+      completed: results.filter(order => order.order_status === 'Completed'),
+      cancelled: results.filter(order => order.order_status === 'Cancelled')
     };
 
     res.json(categorizedOrders);
