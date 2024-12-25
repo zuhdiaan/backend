@@ -939,22 +939,23 @@ app.get('/api/order', (req, res) => {
 app.get('/api/history', (req, res) => {
   let sql = `
     SELECT
-      oh.order_history_id AS order_id,
+      oh.order_history_id,
+      oh.order_id,
       oh.order_date,
-      GROUP_CONCAT(CONCAT(ohd.detail_id, ':', ohd.item_name, ':', ohd.item_amount, ':', ohd.total_price)) AS items,
+      GROUP_CONCAT(CONCAT(ohd.item_name, ':', ohd.item_amount, ':', ohd.total_price)) AS items,
       SUM(ohd.total_price) AS total_price,
       oh.member AS user_name,
       oh.payment_status,
-      t.table_name AS table_number,
+      t.table_name AS \`table\`,
       oh.payment AS payment_method
     FROM
       order_history oh
     LEFT JOIN
       order_history_details ohd ON oh.order_history_id = ohd.order_history_id
     LEFT JOIN
-      \`table\` t ON oh.table_id = t.table_id
+      \`table\` t ON oh.\`table\` = t.table_id
     GROUP BY
-      oh.order_history_id, oh.order_date, oh.member, oh.payment_status, t.table_name, oh.payment
+      oh.order_history_id, oh.order_id, oh.order_date, oh.member, oh.payment_status, t.table_name, oh.payment
   `;
 
   connection.query(sql, (err, results) => {
@@ -1228,176 +1229,177 @@ app.post('/api/updateOrderStatus', async (req, res) => {
   console.log('Received orderId:', orderId, 'and status:', status);
 
   connection.beginTransaction(async (err) => {
-    if (err) {
-      console.error('Error starting transaction:', err);
-      return res.status(500).json({ error: 'Failed to start transaction' });
-    }
-
-    try {
-      console.log('Starting transaction for updating order status...');
-
-      // Step 1: Update the order status
-      const updateOrderStatusSql = "UPDATE `order` SET order_status = ? WHERE order_id = ?";
-      await new Promise((resolve, reject) => {
-        connection.query(updateOrderStatusSql, [status, orderId], (err, results) => {
-          if (err) {
-            console.error('Error updating order status:', err);
-            return reject(err);
-          }
-          console.log('Order status updated:', results);
-          resolve(results);
-        });
-      });
-
-      // Convert status to lowercase for case-insensitive comparison
-      const normalizedStatus = status.toLowerCase();
-      console.log('Normalized status value:', normalizedStatus);
-
-      if (normalizedStatus === 'completed') {
-        console.log('Status is Completed. Proceeding to fetch order and member details...');
-
-        // Step 2: Fetch the order and member details
-        const fetchOrderSql = `
-          SELECT o.*, m.name AS member_name 
-          FROM \`order\` o 
-          JOIN \`members\` m ON o.member_id = m.member_id 
-          WHERE o.order_id = ?
-        `;
-        const orderResults = await new Promise((resolve, reject) => {
-          connection.query(fetchOrderSql, [orderId], (err, results) => {
-            if (err) {
-              console.error('Error fetching order details:', err);
-              return reject(err);
-            }
-            console.log('Order Results:', results);
-            resolve(results);
-          });
-        });
-
-        if (orderResults.length === 0) {
-          console.error('No order found with the given orderId');
-          return connection.rollback(() => {
-            res.status(404).json({ error: 'Order not found' });
-          });
-        }
-
-        const order = orderResults[0];
-        console.log('Order details:', order);
-
-        // Fetch order details
-        const fetchOrderDetailsSql = `
-          SELECT od.*, mi.item_name, mi.price as item_price
-          FROM \`order_details\` od 
-          JOIN \`menu_items\` mi ON od.item_id = mi.item_id 
-          WHERE od.order_id = ?
-        `;
-        const orderDetailsResults = await new Promise((resolve, reject) => {
-          connection.query(fetchOrderDetailsSql, [orderId], (err, results) => {
-            if (err) {
-              console.error('Error fetching order details:', err);
-              return reject(err);
-            }
-            console.log('Order Details Results:', results);
-            resolve(results);
-          });
-        });
-
-        if (orderDetailsResults.length === 0) {
-          console.error('No order details found for the given orderId');
-          return connection.rollback(() => {
-            res.status(404).json({ error: 'Order details not found' });
-          });
-        }
-
-        console.log('Order details fetched:', orderDetailsResults);
-
-        // Calculate total price from order details
-        const totalPrice = orderDetailsResults.reduce((sum, detail) => sum + parseFloat(detail.total_price), 0);
-        console.log('Total Price Calculated:', totalPrice);
-
-        // Step 3: Insert into order_history
-        const insertOrderHistorySql = `
-          INSERT INTO order_history (order_date, table_id, member, payment_status, payment, order_status)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `;
-        const result = await new Promise((resolve, reject) => {
-          connection.query(insertOrderHistorySql, [
-            order.order_date,
-            order.table_id,
-            order.member_name,
-            order.payment_status,
-            order.payment,
-            status
-          ], (err, result) => {
-            if (err) {
-              console.error('Error inserting into order_history:', err);
-              return reject(err);
-            }
-            console.log('Order History Insert Result:', result);
-            resolve(result);
-          });
-        });
-
-        const orderHistoryId = result.insertId;
-        console.log('Order History ID:', orderHistoryId);
-
-        // Step 4: Insert into order_history_details with total_price
-        const insertOrderHistoryDetailsSql = `
-          INSERT INTO order_history_details (order_history_id, item_name, item_amount, item_price, total_price)
-          VALUES ?
-        `;
-        const orderHistoryDetailsValues = orderDetailsResults.map(detail => [
-          orderHistoryId,
-          detail.item_name,
-          detail.item_amount,
-          detail.item_price,
-          detail.total_price
-        ]);
-        console.log('Order History Details Values:', orderHistoryDetailsValues);
-
-        await new Promise((resolve, reject) => {
-          connection.query(insertOrderHistoryDetailsSql, [orderHistoryDetailsValues], (err, result) => {
-            if (err) {
-              console.error('Error inserting into order_history_details:', err);
-              return reject(err);
-            }
-            console.log('Order History Details Insert Result:', result);
-            resolve(result);
-          });
-        });
-
-        // Step 5: Commit the transaction
-        connection.commit((err) => {
-          if (err) {
-            console.error('Error committing transaction:', err);
-            return connection.rollback(() => {
-              res.status(500).json({ error: 'Failed to commit transaction' });
-            });
-          }
-
-          console.log('Transaction committed successfully');
-          res.json({ message: 'Order status updated and moved to history successfully' });
-        });
-      } else {
-        console.log('Status is not Completed. Only updating order status.');
-        connection.commit(err => {
-          if (err) {
-            console.error('Error committing transaction:', err);
-            return connection.rollback(() => {
-              res.status(500).json({ error: 'Failed to commit transaction' });
-            });
-          }
-
-          console.log('Transaction committed successfully');
-          res.json({ message: 'Order status updated successfully' });
-        });
+      if (err) {
+          console.error('Error starting transaction:', err);
+          return res.status(500).json({ error: 'Failed to start transaction' });
       }
-    } catch (error) {
-      connection.rollback(() => {
-        console.error('Error processing request:', error);
-        res.status(500).json({ error: 'Failed to process request' });
-      });
-    }
+
+      try {
+          console.log('Starting transaction for updating order status...');
+
+          // Step 1: Update the order status
+          const updateOrderStatusSql = "UPDATE `order` SET order_status = ? WHERE order_id = ?";
+          await new Promise((resolve, reject) => {
+              connection.query(updateOrderStatusSql, [status, orderId], (err, results) => {
+                  if (err) {
+                      console.error('Error updating order status:', err);
+                      return reject(err);
+                  }
+                  console.log('Order status updated:', results);
+                  resolve(results);
+              });
+          });
+
+          // Convert status to lowercase for case-insensitive comparison
+          const normalizedStatus = status.toLowerCase();
+          console.log('Normalized status value:', normalizedStatus);
+
+          if (normalizedStatus === 'completed') {
+              console.log('Status is Completed. Proceeding to fetch order and member details...');
+
+              // Step 2: Fetch the order and member details
+              const fetchOrderSql = `
+                  SELECT o.*, m.name AS member_name 
+                  FROM \`order\` o 
+                  JOIN \`members\` m ON o.member_id = m.member_id 
+                  WHERE o.order_id = ?
+              `;
+              const orderResults = await new Promise((resolve, reject) => {
+                  connection.query(fetchOrderSql, [orderId], (err, results) => {
+                      if (err) {
+                          console.error('Error fetching order details:', err);
+                          return reject(err);
+                      }
+                      console.log('Order Results:', results);
+                      resolve(results);
+                  });
+              });
+
+              if (orderResults.length === 0) {
+                  console.error('No order found with the given orderId');
+                  return connection.rollback(() => {
+                      res.status(404).json({ error: 'Order not found' });
+                  });
+              }
+
+              const order = orderResults[0];
+              console.log('Order details:', order);
+
+              // Fetch order details
+              const fetchOrderDetailsSql = `
+                  SELECT od.*, mi.item_name, mi.price as item_price
+                  FROM \`order_details\` od 
+                  JOIN \`menu_items\` mi ON od.item_id = mi.item_id 
+                  WHERE od.order_id = ?
+              `;
+              const orderDetailsResults = await new Promise((resolve, reject) => {
+                  connection.query(fetchOrderDetailsSql, [orderId], (err, results) => {
+                      if (err) {
+                          console.error('Error fetching order details:', err);
+                          return reject(err);
+                      }
+                      console.log('Order Details Results:', results);
+                      resolve(results);
+                  });
+              });
+
+              if (orderDetailsResults.length === 0) {
+                  console.error('No order details found for the given orderId');
+                  return connection.rollback(() => {
+                      res.status(404).json({ error: 'Order details not found' });
+                  });
+              }
+
+              console.log('Order details fetched:', orderDetailsResults);
+
+              // Calculate total price from order details
+              const totalPrice = orderDetailsResults.reduce((sum, detail) => sum + parseFloat(detail.total_price), 0);
+              console.log('Total Price Calculated:', totalPrice);
+
+              // Step 3: Insert into order_history, including order_id
+              const insertOrderHistorySql = `
+                  INSERT INTO order_history (order_id, order_date, \`table\`, member, payment_status, payment, order_status)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+              `;
+              const result = await new Promise((resolve, reject) => {
+                  connection.query(insertOrderHistorySql, [
+                      order.order_id,  // Include original order_id here
+                      order.order_date,
+                      order.table,  // Use the new column name `table`
+                      order.member_name,
+                      order.payment_status,
+                      order.payment,
+                      status
+                  ], (err, result) => {
+                      if (err) {
+                          console.error('Error inserting into order_history:', err);
+                          return reject(err);
+                      }
+                      console.log('Order History Insert Result:', result);
+                      resolve(result);
+                  });
+              });
+
+              const orderHistoryId = result.insertId;
+              console.log('Order History ID:', orderHistoryId);
+
+              // Step 4: Insert into order_history_details with total_price
+              const insertOrderHistoryDetailsSql = `
+                  INSERT INTO order_history_details (order_history_id, item_name, item_amount, item_price, total_price)
+                  VALUES ?
+              `;
+              const orderHistoryDetailsValues = orderDetailsResults.map(detail => [
+                  orderHistoryId,
+                  detail.item_name,
+                  detail.item_amount,
+                  detail.item_price,
+                  detail.total_price
+              ]);
+              console.log('Order History Details Values:', orderHistoryDetailsValues);
+
+              await new Promise((resolve, reject) => {
+                  connection.query(insertOrderHistoryDetailsSql, [orderHistoryDetailsValues], (err, result) => {
+                      if (err) {
+                          console.error('Error inserting into order_history_details:', err);
+                          return reject(err);
+                      }
+                      console.log('Order History Details Insert Result:', result);
+                      resolve(result);
+                  });
+              });
+
+              // Step 5: Commit the transaction
+              connection.commit((err) => {
+                  if (err) {
+                      console.error('Error committing transaction:', err);
+                      return connection.rollback(() => {
+                          res.status(500).json({ error: 'Failed to commit transaction' });
+                      });
+                  }
+
+                  console.log('Transaction committed successfully');
+                  res.json({ message: 'Order status updated and moved to history successfully' });
+              });
+          } else {
+              console.log('Status is not Completed. Only updating order status.');
+              connection.commit(err => {
+                  if (err) {
+                      console.error('Error committing transaction:', err);
+                      return connection.rollback(() => {
+                          res.status(500).json({ error: 'Failed to commit transaction' });
+                      });
+                  }
+
+                  console.log('Transaction committed successfully');
+                  res.json({ message: 'Order status updated successfully' });
+              });
+          }
+      } catch (error) {
+          connection.rollback(() => {
+              console.error('Error processing request:', error);
+              res.status(500).json({ error: 'Failed to process request' });
+          });
+      }
   });
 });
 
