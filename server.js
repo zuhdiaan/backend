@@ -941,8 +941,8 @@ app.get('/api/history', (req, res) => {
     SELECT
       oh.order_history_id AS order_id,
       oh.order_date,
-      GROUP_CONCAT(CONCAT(ohd.detail_id, ':', ohd.item_name, ':', ohd.item_amount, ':', ohd.item_price)) AS items,
-      SUM(ohd.item_price * ohd.item_amount) AS total_price,
+      GROUP_CONCAT(CONCAT(ohd.detail_id, ':', ohd.item_name, ':', ohd.item_amount, ':', ohd.total_price)) AS items,
+      SUM(ohd.total_price) AS total_price,
       oh.member AS user_name,
       oh.payment_status,
       t.table_name AS table_number,
