@@ -1453,28 +1453,21 @@ app.delete('/api/deleteUser', (req, res) => {
 app.get('/api/exportOrders', (req, res) => {
   const sql = `
     SELECT 
-      o.order_id, 
-      CONVERT_TZ(o.order_date, '+00:00', '+07:00') AS order_time, 
-      od.item_id, 
-      mi.item_name, 
-      od.item_amount, 
-      od.total_price AS item_total_price, 
-      SUM(od.total_price) OVER (PARTITION BY o.order_id) AS total_price, 
-      m.name AS user_name, 
-      ps.payment_status, 
-      t.table_name AS table_number, 
-      p.payment_description AS payment_method
-    FROM \`order\` o
-    LEFT JOIN order_details od ON o.order_id = od.order_id
-    LEFT JOIN menu_items mi ON od.item_id = mi.item_id
-    LEFT JOIN members m ON o.member_id = m.member_id
-    LEFT JOIN payment_status ps ON o.payment_status_id = ps.payment_status_id
-    LEFT JOIN \`table\` t ON o.table_id = t.table_id
-    LEFT JOIN payment p ON o.payment_id = p.payment_id
-    WHERE o.order_status_id = (
-      SELECT order_status_id FROM order_status WHERE order_status = 'completed'
-    )
-    ORDER BY o.order_id, od.item_id;
+      oh.order_history_id AS order_id,
+      CONVERT_TZ(oh.order_date, '+00:00', '+07:00') AS order_time,
+      ohd.item_name,
+      ohd.item_amount,
+      ohd.total_price AS item_total_price,
+      SUM(ohd.total_price) OVER (PARTITION BY oh.order_history_id) AS total_price,
+      oh.member AS user_name,
+      oh.payment_status,
+      t.table_name AS table_number,
+      oh.payment AS payment_method
+    FROM order_history oh
+    LEFT JOIN order_history_details ohd ON oh.order_history_id = ohd.order_history_id
+    LEFT JOIN \`table\` t ON oh.table_id = t.table_id
+    WHERE oh.order_status = 'Completed'
+    ORDER BY oh.order_history_id, ohd.detail_id;
   `;
 
   connection.query(sql, (error, results) => {
@@ -1483,7 +1476,7 @@ app.get('/api/exportOrders', (req, res) => {
       return res.status(500).json({ error: 'Internal Server Error' });
     }
 
-    // Keep track of the last seen order_id to avoid repetition
+    // Keep track of the last seen order_history_id to avoid repetition
     let previousOrderId = null;
 
     // Format data for Excel with empty cells for repeated fields
