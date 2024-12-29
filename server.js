@@ -752,10 +752,6 @@ app.get('/api/user/order', (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch orders', details: err.message });
     }
 
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'No orders found for this user' });
-    }
-
     const categorizedOrders = {
       pending: results.filter(order => order.order_status === 'Pending'),
       completed: results.filter(order => order.order_status === 'Completed'),
